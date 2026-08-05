@@ -27,8 +27,16 @@ def get_frames(source=None):
             ret, frame = cap.read()
             if ret == False:
                 break
-            yield frame
+            timestamp = target_frame / fps
+            yield timestamp, frame
 
             target_frame += frame_interval
     finally:
         cap.release()
+
+
+count = 0
+for timestamp, frame in get_frames():
+    print(f"[{timestamp}s] frame shape : {frame.shape}")
+    count += 1
+print(f"total frames yielded {count}")
