@@ -35,8 +35,9 @@ def get_frames(source=None):
         cap.release()
 
 
-count = 0
-for timestamp, frame in get_frames():
-    print(f"[{timestamp}s] frame shape : {frame.shape}")
-    count += 1
-print(f"total frames yielded {count}")
+if __name__ == '__main__':
+    count = 0
+    for timestamp, frame in get_frames():
+        print(f"[{timestamp}s] frame shape : {frame.shape}")
+        count += 1
+    print(f"total frames yielded {count}")
