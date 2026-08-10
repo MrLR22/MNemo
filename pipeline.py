@@ -1,11 +1,14 @@
 import cv2
+from modules.hand_detector import HandDetector
 from modules.motion_detector import MotionDetector
 from modules.object_detector import ObjectDetector
+
 
 class MnemoPipeline:
     def __init__(self):
         self.motion_detector = MotionDetector()
         self.object_detector = ObjectDetector()
+        self.hand_detector = HandDetector()
         print("[MnemoPipeline] Initialized pipeline.")
 
     def process_frame(self, frame, timestamp):
@@ -13,11 +16,7 @@ class MnemoPipeline:
         Process a single frame through the pipeline.
         Returns a dictionary with detection results.
         """
-        results = {
-            "timestamp": timestamp,
-            "motion": False,
-            "objects": []
-        }
+        results = {"timestamp": timestamp, "motion": False, "objects": [], "hands": []}
 
         # 1. Check for motion
         has_motion = self.motion_detector.is_active(frame)
@@ -26,6 +25,8 @@ class MnemoPipeline:
         # 2. If motion is detected, run object detection
         if has_motion:
             detections = self.object_detector.detect(frame)
+            hands = self.hand_detector.detect(frame)
             results["objects"] = detections
+            results["hands"] = hands
 
         return results
