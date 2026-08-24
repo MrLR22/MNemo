@@ -2,6 +2,7 @@ import cv2
 from modules.hand_detector import HandDetector
 from modules.motion_detector import MotionDetector
 from modules.object_detector import ObjectDetector
+from modules.optical_flow import OpticalFlowAnalyzer
 
 
 class MnemoPipeline:
@@ -9,6 +10,8 @@ class MnemoPipeline:
         self.motion_detector = MotionDetector()
         self.object_detector = ObjectDetector()
         self.hand_detector = HandDetector()
+        self.optical_flow_analyzer = OpticalFlowAnalyzer()
+        self.prev_frame = None
         print("[MnemoPipeline] Initialized pipeline.")
 
     def process_frame(self, frame, timestamp):
@@ -26,7 +29,18 @@ class MnemoPipeline:
         if has_motion:
             detections = self.object_detector.detect(frame)
             hands = self.hand_detector.detect(frame)
+            
+            # Optical Flow
+            if hasattr(self, 'prev_frame') and self.prev_frame is not None:
+                for hand in hands:
+                    hand_box = hand["box"]
+                    flow = self.optical_flow_analyzer.analyze(self.prev_frame, frame, hand_box)
+                    hand["flow"] = flow
+            
             results["objects"] = detections
             results["hands"] = hands
+        
+        # Always update previous frame for flow calculation
+        self.prev_frame = frame.copy()
 
         return results

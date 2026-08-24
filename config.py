@@ -5,7 +5,7 @@
 import os
 
 # ── VIDEO SOURCE ──
-VIDEO_SOURCE = "data/test_videos/test.mp4"
+VIDEO_SOURCE = "data/test_videos/test2.mp4"
 SAMPLE_FPS = 1
 MOTION_THRESHOLD = 25
 
@@ -36,7 +36,7 @@ ACTION_PROMPTS = [
     "a person using a phone or remote",
     "a person washing their hands",
     "a person sitting down or standing up",
-    "an empty room with no person or activity"
+    "an empty room with no person or activity",
 ]
 
 # ── LOCATION PROMPTS ──
@@ -45,7 +45,7 @@ ROOM_PROMPTS = [
     "a bedroom with a bed",
     "a living room with a couch and television",
     "a bathroom with a sink",
-    "a hallway or corridor"
+    "a hallway or corridor",
 ]
 
 SURFACE_PROMPTS = [
@@ -54,7 +54,7 @@ SURFACE_PROMPTS = [
     "a shelf or cabinet or cupboard",
     "the floor",
     "a bed or sofa or couch",
-    "inside a bag drawer or container"
+    "inside a bag drawer or container",
 ]
 
 # ── WINDOW SETTINGS ──

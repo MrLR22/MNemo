@@ -15,8 +15,16 @@ def main():
             motion_str = "YES" if results["motion"] else "NO "
             num_objects = len(results["objects"])
             num_hands = len(results["hands"])
+            hand_details = ""
+            if num_hands > 0:
+                hand_dirs = []
+                for h in results["hands"]:
+                    d = h.get("flow", {}).get("direction", "unknown")
+                    hand_dirs.append(f"{h['label']}: {d}")
+                hand_details = f" | Hand Flow: {', '.join(hand_dirs)}"
+
             print(
-                f"[{timestamp:.2f}s] Motion: {motion_str} | Objects Found: {num_objects} | Hands Found: {num_hands}"
+                f"[{timestamp:.2f}s] Motion: {motion_str} | Objects Found: {num_objects} | Hands Found: {num_hands}{hand_details}"
             )
             # Draw bounding boxes if objects or hands were found
             if results["motion"]:
@@ -40,11 +48,14 @@ def main():
                     for hand in results["hands"]:
                         x1, y1, x2, y2 = hand["box"]
                         label = hand["label"]
+                        flow_text = ""
+                        if "flow" in hand:
+                            flow_text = f" | {hand['flow']['direction']}"
                         # Draw rectangle and label for hands
                         cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
                         cv2.putText(
                             frame,
-                            f"{label} Hand",
+                            f"{label} Hand{flow_text}",
                             (x1, max(15, y1 - 10)),
                             cv2.FONT_HERSHEY_SIMPLEX,
                             0.5,
