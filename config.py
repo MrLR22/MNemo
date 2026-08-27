@@ -26,17 +26,25 @@ CHROMA_PATH = "outputs/mnemo_db"
 SQLITE_PATH = "outputs/mnemo.db"
 
 # ── ACTION PROMPTS ──
+# "a photo of" prefix is the standard CLIP accuracy trick from the original paper.
+# Keep the list focused — too many similar prompts dilute the softmax and kill separation.
 ACTION_PROMPTS = [
-    "a person picking up an object from a surface",
-    "a person placing an object on a surface",
-    "a person drinking from a bottle or cup",
-    "a person eating food",
-    "a person opening a door or drawer or container",
-    "a person closing a door or drawer or container",
-    "a person using a phone or remote",
-    "a person washing their hands",
-    "a person sitting down or standing up",
-    "an empty room with no person or activity",
+    "a photo of a person picking up an object",
+    "a photo of a person placing down an object",
+    "a photo of a person drinking from a cup or bottle",
+    "a photo of a person eating food with hands or utensils",
+    "a photo of a person cooking at a stove",
+    "a photo of a person opening a door",
+    "a photo of a person using a phone",
+    "a photo of a person typing on a laptop keyboard",
+    "a photo of a person reading a book",
+    "a photo of a person washing hands under running water",
+    "a photo of a person sitting on a chair",
+    "a photo of a person standing in a room",
+    "a photo of a person walking",
+    "a photo of a person cleaning a table",
+    "a photo of a person wearing shoes",
+    "a photo of an empty room with no people",
 ]
 
 # ── LOCATION PROMPTS ──

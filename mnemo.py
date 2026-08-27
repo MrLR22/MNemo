@@ -23,20 +23,18 @@ def main():
                     hand_dirs.append(f"{h['label']}: {d}")
                 hand_details = f" | Hand Flow: {', '.join(hand_dirs)}"
 
-            # Top action (only when motion detected)
+            # Top 2 actions (only when motion detected)
             action_str = ""
             if results["actions"]:
-                top = results["actions"][0]
-                action_str = f" | Action: {top['action']} ({top['score']:.4f})"
+                top1 = results["actions"][0]
+                top2 = results["actions"][1]
+                action_str = f" | Actions: 1. {top1['action']} ({top1['score']:.4f}), 2. {top2['action']} ({top2['score']:.4f})"
 
-            print(
-                f"[{timestamp:.2f}s] Motion: {motion_str} | Objects: {num_objects} | Hands: {num_hands}{hand_details}{action_str}"
-            )
-
-            # Full ranked action scores (only when motion detected)
-            if results["actions"]:
-                for rank, r in enumerate(results["actions"], start=1):
-                    print(f"    {rank:2}. [{r['score']:.4f}]  {r['action']}")
+            # Only print if motion is detected, to avoid spamming the console on static frames
+            if results["motion"]:
+                print(
+                    f"[{timestamp:.2f}s] Motion: {motion_str} | Objects: {num_objects} | Hands: {num_hands}{hand_details}{action_str}"
+                )
             # Draw bounding boxes if objects or hands were found
             if results["motion"]:
                 if num_objects > 0:

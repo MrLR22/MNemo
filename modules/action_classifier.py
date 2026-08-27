@@ -27,7 +27,13 @@ class ActionClassifier:
     def classify(self, frame: np.ndarray) -> list[dict]:
         """Return action scores for *frame*, sorted highest-first."""
         image_features = self._encode_frame(frame)
-        scores = (image_features @ self.text_features.T).softmax(dim=-1)[0].cpu().numpy()
+
+        # Use CLIP's learned temperature (logit_scale) for proper zero-shot classification.
+        # Raw cosine similarity has tiny gaps; the learned temperature amplifies them.
+        with torch.no_grad():
+            logit_scale = self.model.logit_scale.exp()
+            logits = (logit_scale * image_features @ self.text_features.T)
+            scores = logits.softmax(dim=-1)[0].cpu().numpy()
 
         return sorted(
             [{"action": p, "score": round(float(s), 4)} for p, s in zip(ACTION_PROMPTS, scores)],
