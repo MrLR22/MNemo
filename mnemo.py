@@ -30,10 +30,17 @@ def main():
                 top2 = results["actions"][1]
                 action_str = f" | Actions: 1. {top1['action']} ({top1['score']:.4f}), 2. {top2['action']} ({top2['score']:.4f})"
 
+            # Location info
+            location_str = ""
+            if results["room"]:
+                r = results["room"]
+                s = results["surface"]
+                location_str = f" | Room: {r['room']} ({r['confidence']:.2f}) | Surface: {s['surface']} ({s['confidence']:.2f})"
+
             # Only print if motion is detected, to avoid spamming the console on static frames
             if results["motion"]:
                 print(
-                    f"[{timestamp:.2f}s] Motion: {motion_str} | Objects: {num_objects} | Hands: {num_hands}{hand_details}{action_str}"
+                    f"[{timestamp:.2f}s] Motion: {motion_str} | Objects: {num_objects} | Hands: {num_hands}{hand_details}{action_str}{location_str}"
                 )
             # Draw bounding boxes if objects or hands were found
             if results["motion"]:

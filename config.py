@@ -44,25 +44,33 @@ ACTION_PROMPTS = [
     "a photo of a person walking",
     "a photo of a person cleaning a table",
     "a photo of a person wearing shoes",
+    "a photo of a person watching television",
+    "a photo of a person brushing teeth in a bathroom",
+    "a photo of a person folding clothes",
+    "a photo of a person carrying an object while walking",
+    "a photo of a person lying down on a bed or sofa",
+    "a photo of two people talking to each other",
     "a photo of an empty room with no people",
 ]
 
 # ── LOCATION PROMPTS ──
 ROOM_PROMPTS = [
-    "a kitchen with appliances and counters",
-    "a bedroom with a bed",
-    "a living room with a couch and television",
-    "a bathroom with a sink",
-    "a hallway or corridor",
+    "a photo of a kitchen with appliances and counters",
+    "a photo of a bedroom with a bed",
+    "a photo of a living room with a couch and television",
+    "a photo of a bathroom with a sink and mirror",
+    "a photo of a hallway or corridor",
+    "a photo of an office or study room with a desk",
 ]
 
 SURFACE_PROMPTS = [
-    "a kitchen counter or dining table surface",
-    "a wall hook or coat hanger",
-    "a shelf or cabinet or cupboard",
-    "the floor",
-    "a bed or sofa or couch",
-    "inside a bag drawer or container",
+    "a photo of a kitchen counter or dining table",
+    "a photo of a wall hook or coat hanger",
+    "a photo of a shelf or cabinet",
+    "a photo of the floor",
+    "a photo of a bed or sofa",
+    "a photo of the inside of a bag or drawer",
+    "a photo of a desk or work surface",
 ]
 
 # ── WINDOW SETTINGS ──
