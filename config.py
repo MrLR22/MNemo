@@ -5,7 +5,7 @@
 import os
 
 # ── VIDEO SOURCE ──
-VIDEO_SOURCE = "data/test_videos/test2.mp4"
+VIDEO_SOURCE = "data/test_videos/test.mp4"
 SAMPLE_FPS = 1
 MOTION_THRESHOLD = 25
 
