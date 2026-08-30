@@ -1,4 +1,5 @@
 import cv2
+import pprint
 from modules.video_source import get_frames
 from pipeline import MnemoPipeline
 
@@ -39,9 +40,15 @@ def main():
 
             # Only print if motion is detected, to avoid spamming the console on static frames
             if results["motion"]:
-                print(
-                    f"[{timestamp:.2f}s] Motion: {motion_str} | Objects: {num_objects} | Hands: {num_hands}{hand_details}{action_str}{location_str}"
-                )
+                # print(
+                #     f"[{timestamp:.2f}s] Motion: {motion_str} | Objects: {num_objects} | Hands: {num_hands}{hand_details}{action_str}{location_str}"
+                # )
+                output_dict = {
+                    "timestamp": round(timestamp, 2),
+                    **results,
+                    "actions": results["actions"][:1] if results.get("actions") else []
+                }
+                pprint.pprint(output_dict, sort_dicts=False)
             # Draw bounding boxes if objects or hands were found
             if results["motion"]:
                 if num_objects > 0:
