@@ -1,10 +1,12 @@
 import cv2
 from modules.action_classifier import ActionClassifier
+from modules.event_binder import EventBinder
 from modules.hand_detector import HandDetector
 from modules.location_detector import LocationDetector
 from modules.motion_detector import MotionDetector
 from modules.object_detector import ObjectDetector
 from modules.optical_flow import OpticalFlowAnalyzer
+from config import VIDEO_SOURCE
 
 
 class MnemoPipeline:
@@ -18,7 +20,9 @@ class MnemoPipeline:
             model=self.action_classifier.model,
             preprocess=self.action_classifier.preprocess,
         )
+        self.event_binder = EventBinder()
         self.prev_frame = None
+        self._prev_timestamp = None
         print("[MnemoPipeline] Initialized pipeline.")
 
     def process_frame(self, frame, timestamp):
@@ -34,6 +38,7 @@ class MnemoPipeline:
             "actions": [],
             "room": {},
             "surface": {},
+            "event": None,
         }
 
         # 1. Check for motion
@@ -61,7 +66,27 @@ class MnemoPipeline:
             obj_box = detections[0]["box"] if detections else None
             results["surface"] = self.location_detector.detect_surface(frame, obj_box)
 
-        # Always update previous frame for flow calculation
+            # Aggregate flow from all hands — pick the one with highest magnitude
+            flow_result = max(
+                (h["flow"] for h in hands if "flow" in h),
+                key=lambda f: f["magnitude"],
+                default={"direction": "stationary", "magnitude": 0.0, "vector_x": 0.0, "vector_y": 0.0},
+            )
+
+            # Bind all signals into one EventRecord (or None)
+            results["event"] = self.event_binder.bind(
+                yolo_detections=detections,
+                hand_detections=hands,
+                flow_result=flow_result,
+                action_scores=results["actions"],
+                location_result={"room": results["room"], "surface": results["surface"]},
+                timestamp_start=self._prev_timestamp or timestamp,
+                timestamp_end=timestamp,
+                video_source=VIDEO_SOURCE,
+            )
+
+        # Always update previous frame + timestamp for flow calculation
         self.prev_frame = frame.copy()
+        self._prev_timestamp = timestamp
 
         return results

@@ -40,15 +40,17 @@ def main():
 
             # Only print if motion is detected, to avoid spamming the console on static frames
             if results["motion"]:
-                # print(
-                #     f"[{timestamp:.2f}s] Motion: {motion_str} | Objects: {num_objects} | Hands: {num_hands}{hand_details}{action_str}{location_str}"
-                # )
                 output_dict = {
                     "timestamp": round(timestamp, 2),
                     **results,
-                    "actions": results["actions"][:1] if results.get("actions") else []
+                    "actions": results["actions"][:1] if results.get("actions") else [],
+                    "event": results["event"].to_dict() if results.get("event") else None,
                 }
                 pprint.pprint(output_dict, sort_dicts=False)
+                if results["event"]:
+                    print(f"\n{'━'*60}")
+                    print(f"  EVENT BOUND: {results['event']}")
+                    print(f"{'━'*60}\n")
             # Draw bounding boxes if objects or hands were found
             if results["motion"]:
                 if num_objects > 0:
