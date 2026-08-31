@@ -6,7 +6,9 @@ from pipeline import MnemoPipeline
 
 def main():
     print("Starting Mnemo Pipeline...")
+    print("Controls: [SPACE] Pause/Resume  |  [Q] Quit")
     pipeline = MnemoPipeline()
+    paused = False
     try:
         # get_frames() returns a generator yielding (timestamp, frame)
         for timestamp, frame in get_frames():
@@ -89,10 +91,43 @@ def main():
                         )
             # Display frame
             cv2.imshow("Mnemo System", frame)
-            # Press 'q' to quit
-            if cv2.waitKey(1) & 0xFF == ord("q"):
+            # Key handling: SPACE = pause/resume, Q = quit
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
                 print("Quitting...")
                 break
+            elif key == ord(" "):
+                paused = not paused
+                print("[Mnemo] Paused." if paused else "[Mnemo] Resumed.")
+
+            # Pause loop — freeze the current frame until SPACE is pressed again
+            while paused:
+                # Draw a semi-transparent PAUSED banner on the frozen frame
+                overlay = frame.copy()
+                h, w = overlay.shape[:2]
+                cv2.rectangle(overlay, (0, h // 2 - 35), (w, h // 2 + 35), (0, 0, 0), -1)
+                cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
+                cv2.putText(
+                    frame,
+                    "PAUSED  [SPACE] to resume  [Q] to quit",
+                    (w // 2 - 260, h // 2 + 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.75,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.imshow("Mnemo System", frame)
+                pause_key = cv2.waitKey(30) & 0xFF
+                if pause_key == ord(" "):
+                    paused = False
+                    print("[Mnemo] Resumed.")
+                elif pause_key == ord("q"):
+                    print("Quitting...")
+                    paused = False   # exit inner loop
+                    raise KeyboardInterrupt  # bubble up to break the outer loop
+    except KeyboardInterrupt:
+        pass  # clean exit from quit-while-paused path
     except Exception as e:
         print(f"Error occurred: {e}")
     finally:
