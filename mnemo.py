@@ -89,6 +89,41 @@ def main():
                             (255, 0, 0),
                             2,
                         )
+
+            # ── Action subtitle overlay (separate from pause banner) ──────────
+            # Shows top predicted action as a subtitle at the bottom of the frame.
+            # Remove or comment out this block if you no longer want on-screen actions.
+            h_f, w_f = frame.shape[:2]
+            subtitle_text = ""
+            if results.get("actions"):
+                top_action = results["actions"][0]
+                subtitle_text = f"Action: {top_action['action']}  ({top_action['score']:.2f})"
+            if subtitle_text:
+                sub_font       = cv2.FONT_HERSHEY_SIMPLEX
+                sub_scale      = 0.55
+                sub_thickness  = 1
+                (tw, th), _    = cv2.getTextSize(subtitle_text, sub_font, sub_scale, sub_thickness)
+                bar_h          = th + 20          # padding above and below text
+                bar_y1         = h_f - bar_h - 4  # near the very bottom
+                # Translucent dark strip
+                sub_overlay    = frame.copy()
+                cv2.rectangle(sub_overlay, (0, bar_y1), (w_f, h_f), (0, 0, 0), -1)
+                cv2.addWeighted(sub_overlay, 0.6, frame, 0.4, 0, frame)
+                # White subtitle text, centred horizontally
+                text_x = (w_f - tw) // 2
+                text_y = bar_y1 + th + 8
+                cv2.putText(
+                    frame,
+                    subtitle_text,
+                    (text_x, text_y),
+                    sub_font,
+                    sub_scale,
+                    (255, 255, 255),
+                    sub_thickness,
+                    cv2.LINE_AA,
+                )
+            # ── end subtitle overlay ──────────────────────────────────────────
+
             # Display frame
             cv2.imshow("Mnemo System", frame)
             # Key handling: SPACE = pause/resume, Q = quit
@@ -102,19 +137,21 @@ def main():
 
             # Pause loop — freeze the current frame until SPACE is pressed again
             while paused:
-                # Draw a semi-transparent PAUSED banner on the frozen frame
+                # Draw a small semi-transparent PAUSED hint near the top-centre
                 overlay = frame.copy()
                 h, w = overlay.shape[:2]
-                cv2.rectangle(overlay, (0, h // 2 - 35), (w, h // 2 + 35), (0, 0, 0), -1)
+                hint_y1 = int(h * 0.08)   # ~8 % from the top
+                hint_y2 = hint_y1 + 28
+                cv2.rectangle(overlay, (0, hint_y1), (w, hint_y2), (0, 0, 0), -1)
                 cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
                 cv2.putText(
                     frame,
-                    "PAUSED  [SPACE] to resume  [Q] to quit",
-                    (w // 2 - 260, h // 2 + 10),
+                    "PAUSED  |  SPACE = resume   Q = quit",
+                    (w // 2 - 195, hint_y1 + 20),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.75,
-                    (255, 255, 255),
-                    2,
+                    0.55,
+                    (220, 220, 220),
+                    1,
                     cv2.LINE_AA,
                 )
                 cv2.imshow("Mnemo System", frame)
