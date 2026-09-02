@@ -4,58 +4,80 @@ from modules.video_source import get_frames
 from pipeline import MnemoPipeline
 
 
+def _clean_prompt(text: str) -> str:
+    """Strip standard prefix from CLIP prompts for cleaner presentation."""
+    if not text:
+        return "None"
+    for prefix in ["a photo of a person ", "a photo of an ", "a photo of a ", "a photo of "]:
+        if text.lower().startswith(prefix):
+            return text[len(prefix):]
+    return text
+
+
 def main():
     print("Starting Mnemo Pipeline...")
     print("Controls: [SPACE] Pause/Resume  |  [Q] Quit")
     pipeline = MnemoPipeline()
     paused = False
+
+    # Setup resizable window so it doesn't fill the entire screen
+    cv2.namedWindow("Mnemo System", cv2.WINDOW_NORMAL)
+    cv2.resizeWindow("Mnemo System", 960, 540)
+
     try:
         # get_frames() returns a generator yielding (timestamp, frame)
         for timestamp, frame in get_frames():
             # Process frame
             results = pipeline.process_frame(frame, timestamp)
-            # Print results to terminal
-            motion_str = "YES" if results["motion"] else "NO "
-            num_objects = len(results["objects"])
-            num_hands = len(results["hands"])
-            hand_details = ""
-            if num_hands > 0:
-                hand_dirs = []
-                for h in results["hands"]:
-                    d = h.get("flow", {}).get("direction", "unknown")
-                    hand_dirs.append(f"{h['label']}: {d}")
-                hand_details = f" | Hand Flow: {', '.join(hand_dirs)}"
 
-            # Top 2 actions (only when motion detected)
-            action_str = ""
-            if results["actions"]:
-                top1 = results["actions"][0]
-                top2 = results["actions"][1]
-                action_str = f" | Actions: 1. {top1['action']} ({top1['score']:.4f}), 2. {top2['action']} ({top2['score']:.4f})"
-
-            # Location info
-            location_str = ""
-            if results["room"]:
-                r = results["room"]
-                s = results["surface"]
-                location_str = f" | Room: {r['room']} ({r['confidence']:.2f}) | Surface: {s['surface']} ({s['confidence']:.2f})"
-
-            # Only print if motion is detected, to avoid spamming the console on static frames
+            # ── PRINT 3 SIGNALS (only when motion is detected) ──────────────────
             if results["motion"]:
-                output_dict = {
-                    "timestamp": round(timestamp, 2),
-                    **results,
-                    "actions": results["actions"][:1] if results.get("actions") else [],
-                    "event": results["event"].to_dict() if results.get("event") else None,
-                }
-                pprint.pprint(output_dict, sort_dicts=False)
-                if results["event"]:
-                    print(f"\n{'━'*60}")
-                    print(f"  EVENT BOUND: {results['event']}")
-                    print(f"{'━'*60}\n")
+                # Signal 1: Action (CLIP)
+                top_action_raw = results["actions"][0]["action"] if results["actions"] else "None"
+                action_score = results["actions"][0]["score"] if results["actions"] else 0.0
+                action_clean = _clean_prompt(top_action_raw)
+
+                # Signal 2: Object (YOLO + Hand Interaction)
+                if results.get("event"):
+                    object_str = f"{results['event'].object_label} (Interacting with hand)"
+                elif results["objects"]:
+                    top_obj = results["objects"][0]
+                    object_str = f"{top_obj['label']} (conf: {top_obj['confidence']:.2f})"
+                else:
+                    object_str = "None detected"
+
+                # Signal 3: Location (Room & Surface)
+                room_raw = results["room"].get("room", "") if results.get("room") else ""
+                surface_raw = results["surface"].get("surface", "") if results.get("surface") else ""
+                room_clean = _clean_prompt(room_raw)
+                surface_clean = _clean_prompt(surface_raw)
+                if room_clean and surface_clean:
+                    location_str = f"{room_clean} (surface: {surface_clean})"
+                elif room_clean:
+                    location_str = room_clean
+                else:
+                    location_str = "Unknown"
+
+                # Hand flow / movement direction
+                flow_info = ""
+                if results["hands"]:
+                    for h in results["hands"]:
+                        if "flow" in h and h["flow"].get("direction") and h["flow"]["direction"] != "stationary":
+                            flow_info = f" | Hand Flow: {h['flow']['direction']} (mag: {h['flow'].get('magnitude', 0.0):.1f})"
+                            break
+
+                print(f"\n{'━'*64}")
+                print(f" [Time: {timestamp:5.2f}s]  3 SIGNALS DETECTED:")
+                print(f"  1. ACTION   : {action_clean} (conf: {action_score:.2f})")
+                print(f"  2. OBJECT   : {object_str}")
+                print(f"  3. LOCATION : {location_str}{flow_info}")
+                if results.get("event"):
+                    print(f"  --------------------------------------------------------------")
+                    print(f"  ⭐ EVENT BOUND: {results['event']}")
+                print(f"{'━'*64}")
             # Draw bounding boxes if objects or hands were found
             if results["motion"]:
-                if num_objects > 0:
+                if results["objects"]:
                     for obj in results["objects"]:
                         x1, y1, x2, y2 = obj["box"]
                         label = obj["label"]
@@ -71,7 +93,7 @@ def main():
                             (0, 255, 0),
                             2,
                         )
-                if num_hands > 0:
+                if results["hands"]:
                     for hand in results["hands"]:
                         x1, y1, x2, y2 = hand["box"]
                         label = hand["label"]

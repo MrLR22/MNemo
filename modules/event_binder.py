@@ -2,7 +2,7 @@
 # Combines YOLO + optical flow + CLIP to bind action → object → location.
 # Rule-based fusion now; MLP replaces rules in Milestone 5 (TASK-019).
 
-from config import IOU_THRESHOLD, CONFIDENCE_THRESHOLD
+from config import IOU_THRESHOLD, CONFIDENCE_THRESHOLD, ACTION_THRESHOLD
 from modules.event_record import EventRecord
 
 # Labels that are structural/permanent — interacting with them is never
@@ -56,34 +56,56 @@ class EventBinder:
         video_source: str = "",
     ) -> EventRecord | None:
 
-        # ── 1. Guard: need hands, objects, and a usable action ──────────────
-        if not hand_detections or not yolo_detections or not action_scores:
+        # ── 1. Guard: need objects and action scores ──────────────
+        if not yolo_detections or not action_scores:
             return None
 
         top_action = action_scores[0]
 
-        if top_action["score"] < CONFIDENCE_THRESHOLD:
+        # Action probability check (must exceed uniform chance among 22 prompts)
+        if top_action["score"] < ACTION_THRESHOLD:
             return None
 
         if "empty room" in top_action["action"].lower():
             return None
 
-        # ── 2. Find the candidate object with highest hand-IoU ───────────────
+        # ── 2. Find the candidate object with highest hand-IoU / proximity ───
+        candidate_objs = [obj for obj in yolo_detections if obj["label"] not in _SKIP_LABELS]
+        if not candidate_objs:
+            return None
+
         best_obj, best_iou = None, 0.0
-        for hand in hand_detections:
-            for obj in yolo_detections:
-                if obj["label"] in _SKIP_LABELS:
-                    continue
-                iou = _iou(hand["box"], obj["box"])
-                if iou > best_iou:
-                    best_iou = iou
-                    best_obj = obj
+
+        if hand_detections:
+            for hand in hand_detections:
+                for obj in candidate_objs:
+                    iou = _iou(hand["box"], obj["box"])
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_obj = obj
+
+            # If strict IoU is small, check center-distance proximity
+            if best_obj is None or best_iou < IOU_THRESHOLD:
+                for hand in hand_detections:
+                    hx, hy = hand.get("center", ((hand["box"][0] + hand["box"][2])//2, (hand["box"][1] + hand["box"][3])//2))
+                    for obj in candidate_objs:
+                        ox, oy = obj.get("center", ((obj["box"][0] + obj["box"][2])//2, (obj["box"][1] + obj["box"][3])//2))
+                        dist = ((hx - ox)**2 + (hy - oy)**2)**0.5
+                        # If hand is within 120 pixels of object center, treat as interaction
+                        if dist < 120 and (best_obj is None or dist < 120):
+                            best_obj = obj
+                            best_iou = max(best_iou, 0.15)
+                            break
+        else:
+            # When hand is briefly occluded / not detected, fall back to top detected object
+            best_obj = candidate_objs[0]
+            best_iou = 0.10
 
         if best_obj is None or best_iou < IOU_THRESHOLD:
             return None
 
         # ── 3. Combined confidence: CLIP 50% + IoU 30% + flow 20% ───────────
-        flow_score = min(flow_result.get("magnitude", 0.0) / 10.0, 1.0)
+        flow_score = min(flow_result.get("magnitude", 0.0) / 5.0, 1.0)
         combined_confidence = round(
             top_action["score"] * 0.5
             + min(best_iou, 1.0) * 0.3
