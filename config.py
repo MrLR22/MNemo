@@ -1,78 +1,117 @@
 # config.py
-# Central configuration for Mnemo system
-# All settings live here. Never hardcode values in other files.
+# Central configuration for Mnemo. Every tunable value lives here.
+# Values marked "TUNE" are starting points: measure them on your own footage.
 
 import os
 
-# ── VIDEO SOURCE ──
-VIDEO_SOURCE = "data/test_videos/test.mp4"
-SAMPLE_FPS = 1
-MOTION_THRESHOLD = 25
+ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# ── MODEL PATHS ──
-YOLO_MODEL = "yolov8n.pt"
-CLIP_MODEL = "ViT-B/32"
-OLLAMA_MODEL = "phi3-mini"
-MLP_MODEL_PATH = "mlp/trained_mlp.pth"
 
-# ── THRESHOLDS ──
-CONFIDENCE_THRESHOLD = 0.20
-IOU_THRESHOLD = 0.05
-ACTION_THRESHOLD = 0.12
-CLIP_SIMILARITY_CHANGE_THRESHOLD = 0.85
-FLOW_MAGNITUDE_THRESHOLD = 1.0
+def _p(*parts):
+    return os.path.join(ROOT, *parts)
 
-# ── STORAGE PATHS ──
-CHROMA_PATH = "outputs/mnemo_db"
-SQLITE_PATH = "outputs/mnemo.db"
 
-# ── ACTION PROMPTS ──
-# "a photo of" prefix is the standard CLIP accuracy trick from the original paper.
-# Keep the list focused — too many similar prompts dilute the softmax and kill separation.
-ACTION_PROMPTS = [
-    "a photo of a person picking up an object",
-    "a photo of a person placing down an object",
-    "a photo of a person drinking from a cup or bottle",
-    "a photo of a person eating food with hands or utensils",
-    "a photo of a person cooking at a stove",
-    "a photo of a person opening a door",
-    "a photo of a person using a phone",
-    "a photo of a person typing on a laptop keyboard",
-    "a photo of a person reading a book",
-    "a photo of a person washing hands under running water",
-    "a photo of a person sitting on a chair",
-    "a photo of a person standing in a room",
-    "a photo of a person walking",
-    "a photo of a person cleaning a table",
-    "a photo of a person wearing shoes",
-    "a photo of a person watching television",
-    "a photo of a person brushing teeth in a bathroom",
-    "a photo of a person folding clothes",
-    "a photo of a person carrying an object while walking",
-    "a photo of a person lying down on a bed or sofa",
-    "a photo of two people talking to each other",
-    "a photo of an empty room with no people",
-]
+# ── M1: FRAME SOURCE ──
+PROCESS_FPS = 10              # frames analysed per second (pick/put needs several frames per second)
+PROCESS_WIDTH = 640           # frames are downscaled to this width (YOLO/MediaPipe/CLIP resize smaller anyway)
+BUFFER_SECONDS = 12           # RAM-only rolling buffer length (privacy: never written to disk)
 
-# ── LOCATION PROMPTS ──
-ROOM_PROMPTS = [
-    "a photo of a kitchen with appliances and counters",
-    "a photo of a bedroom with a bed",
-    "a photo of a living room with a couch and television",
-    "a photo of a bathroom with a sink and mirror",
-    "a photo of a hallway or corridor",
-    "a photo of an office or study room with a desk",
-]
+# ── TRACKED OBJECTS ──
+TARGET_OBJECTS = ["keys", "wallet", "phone", "pill_bottle"]
 
-SURFACE_PROMPTS = [
-    "a photo of a kitchen counter or dining table",
-    "a photo of a wall hook or coat hanger",
-    "a photo of a shelf or cabinet",
-    "a photo of the floor",
-    "a photo of a bed or sofa",
-    "a photo of the inside of a bag or drawer",
-    "a photo of a desk or work surface",
-]
+# Spoken / typed names → canonical object name (used by the query interface)
+OBJECT_SYNONYMS = {
+    "keys": ["key", "keys", "car keys", "house keys", "keychain"],
+    "wallet": ["wallet", "purse"],
+    "phone": ["phone", "mobile", "cell phone", "cellphone", "smartphone"],
+    "pill_bottle": ["pill", "pills", "pill bottle", "medicine", "medication",
+                    "tablet", "tablets", "meds"],
+}
 
-# ── WINDOW SETTINGS ──
-# WINDOW_BUFFER_SIZE = 10
+# ── M2: PERCEPTION ──
+HAND_MODEL = _p("hand_landmarker.task")
+OBJECT_BACKEND = "auto"       # "auto" | "finetuned" | "yoloworld" | "coco"  (see modules/object_detector.py)
+FINETUNED_YOLO = _p("models", "mnemo_objects.pt")   # produced by detect/train_yolo.py
+COCO_YOLO = _p("yolov8n.pt")
+# YOLO-World: open-vocabulary detector, finds objects from text names, needs no training photos.
+YOLOWORLD_MODEL = "yolov8s-worldv2.pt"               # downloaded automatically by ultralytics
+YOLOWORLD_PROMPTS = {"keys": "keys", "wallet": "wallet", "phone": "mobile phone",
+                     "pill_bottle": "pill bottle"}  # TUNE: try other wordings on test images
+YOLOWORLD_CONFIDENCE = 0.15   # TUNE: open-vocabulary scores are lower than closed-set YOLO
+# Until the fine-tuned model exists, fall back to COCO. COCO has NO keys/wallet class,
+# so only phone (and a rough bottle→pill_bottle stand-in) work in fallback mode.
+COCO_CLASS_MAP = {"cell phone": "phone", "bottle": "pill_bottle"}
+YOLO_CONFIDENCE = 0.35        # TUNE
+YOLO_IMGSZ = 640
+
+HAND_MIN_CONFIDENCE = 0.5
+# MediaPipe assumes a mirrored (selfie) image when it labels Left/Right.
+# A chest camera is not mirrored, so the labels are swapped. Verify on your footage.
+FLIP_HANDEDNESS = True
+# "Own hand" filter: on a chest camera your own arms enter from the lower part of the
+# frame. Hands whose wrist is above this line (0 = top, 1 = bottom) are treated as
+# someone else's and ignored. TUNE on your footage.
+OWN_HAND_MIN_WRIST_Y = 0.30
+
+# ── M3: INTERACTION ENGINE (rule-based state machine) ──
+# Counts are in processed frames (PROCESS_FPS per second). All TUNE.
+CONTACT_DIST = 1.0            # object-centre-to-hand distance, in units of hand size, that counts as contact
+CONTACT_FRAMES = 3            # min contact frames before a pickup can fire (ignores brushes/nudges)
+MOVE_TOGETHER_FRAMES = 3      # frames object and hand must move together
+MOVE_MIN_SPEED = 0.008        # min ego-compensated speed (fraction of frame width per frame)
+MOVE_DIR_COS = 0.5            # min cosine between hand and object velocity to call it "together"
+STILL_SPEED = 0.004           # object speed below this = still
+RELEASE_FRAMES = 5            # object still AND not in contact for this many frames = putdown
+OCCLUDED_GRASP_FRAMES = 4     # object vanished while in contact and hand moved away = pickup (hidden in grip)
+EVENT_COOLDOWN_S = 2.0        # same (object, action) cannot fire twice within this window
+EVENT_MODEL_THRESHOLD = 0.5   # model mode: min peak probability for an event. TUNE on validation set
+
+# ── M4/M5: LANDMARKS ──
+CLIP_ARCH = "ViT-B-32"
+CLIP_PRETRAINED = "openai"
+ENROLL_DIR = _p("data", "enroll")
+LANDMARK_INDEX = _p("models", "landmark_index.npz")
+ENROLL_SAMPLE_FPS = 2
+LANDMARK_TOPK = 5
+LANDMARK_MIN_SIM = 0.80       # TUNE with `mnemo.py enroll --check`: CLIP image-image similarity is high
+                              # even for unrelated scenes (an unseen scene scored 0.84 in our check)
+LANDMARK_MIN_MARGIN = 0.01    # TUNE: best landmark must beat the runner-up by this much
+
+# Zero-shot places: used when no home-tour enrollment exists. CLIP compares the put-down frame
+# with these text descriptions. Generic surfaces only ("desk"), not "MY desk". TUNE wording.
+PLACE_PROMPTS = {
+    "desk": "a photo of a desk or study table",
+    "bed": "a photo of a bed",
+    "shelf": "a photo of a shelf or cupboard",
+    "table": "a photo of a dining or side table",
+    "kitchen_counter": "a photo of a kitchen counter",
+    "floor": "a photo of the floor",
+    "bag": "a photo of the inside of a bag",
+    "sofa_or_chair": "a photo of a sofa or chair",
+    "bathroom_sink": "a photo of a bathroom sink",
+    # Rejection options (names starting with "_"): if one of these wins, the place is "unknown".
+    # Without them CLIP must pick a surface even for a street (tested: street photo → "floor" 54%).
+    "_outdoors": "a photo of a street or outdoors",
+    "_person": "a photo of a person's face or body",
+    "_blurry": "a blurry photo with motion blur",
+    "_hand": "a close-up photo of a hand",
+}
+PLACE_MIN_PROB = 0.35         # TUNE: below this the place is "unknown"
+
+# ── M6: EVENT STORE ──
+DB_PATH = _p("outputs", "mnemo.db")
+SIM_DB_PATH = _p("outputs", "mnemo_simulated.db")   # simulated days live in a separate, clearly-named DB
+
+# ── M8: HABITS ──
+HABIT_LOOKBACK_DAYS = 14
+HABIT_MIN_DAYS = 3            # need at least this many days of history
+HABIT_MIN_DAY_FRACTION = 0.6  # event must happen on >=60% of observed days to be a habit
+HABIT_CLUSTER_GAP_MIN = 90    # events further apart than this (minutes of day) are different habits
+HABIT_MIN_WINDOW_MIN = 45     # habit window is at least +-45 min around the typical time
+HABIT_MAX_SPREAD_MIN = 30     # median absolute deviation above this = scattered, not a routine
+
+# ── DEEP LEARNING MODEL (HOI-TCN) ──
+MODEL_CHECKPOINT = _p("models", "hoi_tcn.pt")
+FEATURE_DIR = _p("data", "features")
+OWN_VIDEO_DIR = _p("data", "own", "videos")
+OWN_LABELS_CSV = _p("data", "own", "labels.csv")

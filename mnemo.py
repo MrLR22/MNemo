@@ -1,198 +1,142 @@
-import cv2
-import pprint
-from modules.video_source import get_frames
-from pipeline import MnemoPipeline
+# mnemo.py
+# Mnemo: in-home personal memory assistant (command-line entry point).
+#
+#   python mnemo.py run VIDEO [--start "2026-10-15 08:30"] [--mode rules|model] [--show]
+#   python mnemo.py run 0 --show                     (live camera index 0)
+#   python mnemo.py enroll [--check]                 build landmark index from data/enroll/
+#   python mnemo.py ask "where is my wallet?"
+#   python mnemo.py events                           list stored events
+#   python mnemo.py habits [--now "2026-10-15 22:00"] [--simulated]
+#   python mnemo.py simulate --days 14               write SIMULATED history to a separate DB
+
+import argparse
+import sys
+from datetime import datetime
+
+import config as C
 
 
-def _clean_prompt(text: str) -> str:
-    """Strip standard prefix from CLIP prompts for cleaner presentation."""
-    if not text:
-        return "None"
-    for prefix in ["a photo of a person ", "a photo of an ", "a photo of a ", "a photo of "]:
-        if text.lower().startswith(prefix):
-            return text[len(prefix):]
-    return text
+def _dt(s: str | None) -> datetime | None:
+    return datetime.fromisoformat(s) if s else None
 
 
-def main():
-    print("Starting Mnemo Pipeline...")
-    print("Controls: [SPACE] Pause/Resume  |  [Q] Quit")
-    pipeline = MnemoPipeline()
-    paused = False
+def cmd_run(a):
+    from modules.pipeline import MnemoPipeline
+    from modules.storage import EventStore
+    source = int(a.source) if a.source.isdigit() else a.source
+    store = EventStore(a.db)
+    pipe = MnemoPipeline(mode=a.mode, store=store, use_landmarks=not a.no_landmarks)
+    print(f"Processing {source} in {a.mode} mode at {C.PROCESS_FPS} fps ... (q in the window to stop)")
+    events, stats = pipe.run(source, start_time=_dt(a.start), show=a.show)
+    print(f"\n{stats['events']} events stored in {a.db}")
+    print(f"{stats['frames']} frames in {stats['seconds']}s → {stats['fps']} fps, peak RAM {stats['peak_ram_mb']} MB")
 
-    # Setup resizable window so it doesn't fill the entire screen
-    cv2.namedWindow("Mnemo System", cv2.WINDOW_NORMAL)
-    cv2.resizeWindow("Mnemo System", 960, 540)
 
-    try:
-        # get_frames() returns a generator yielding (timestamp, frame)
-        for timestamp, frame in get_frames():
-            # Process frame
-            results = pipeline.process_frame(frame, timestamp)
+def cmd_enroll(a):
+    from modules.landmarks import ClipEmbedder, LandmarkIndex, build_index, check_index
+    if a.check_only:
+        idx = LandmarkIndex.load()
+    else:
+        idx = build_index(ClipEmbedder(), a.dir)
+        idx.save()
+        print(f"Saved landmark index: {len(idx.labels)} frames, landmarks {idx.names} → {C.LANDMARK_INDEX}")
+    if a.check or a.check_only:
+        r = check_index(idx)
+        print("\nLeave-one-source-out check (each enrollment clip vs. all others):")
+        for k, v in r.items():
+            print(f"  {k}: {v}")
+        if any(n < 2 for n in r["sources_per_landmark"].values()):
+            print("  NOTE: landmarks with only 1 clip/photo can't be checked. Record 2-3 clips per landmark "
+                  "from different angles/lighting.")
 
-            # ── PRINT 3 SIGNALS (only when motion is detected) ──────────────────
-            if results["motion"]:
-                # Signal 1: Action (CLIP)
-                top_action_raw = results["actions"][0]["action"] if results["actions"] else "None"
-                action_score = results["actions"][0]["score"] if results["actions"] else 0.0
-                action_clean = _clean_prompt(top_action_raw)
 
-                # Signal 2: Object (YOLO + Hand Interaction)
-                if results.get("event"):
-                    object_str = f"{results['event'].object_label} (Interacting with hand)"
-                elif results["objects"]:
-                    top_obj = results["objects"][0]
-                    object_str = f"{top_obj['label']} (conf: {top_obj['confidence']:.2f})"
-                else:
-                    object_str = "None detected"
+def cmd_ask(a):
+    from modules.storage import EventStore
+    from query.query_engine import QueryEngine
+    db = C.SIM_DB_PATH if a.simulated else a.db
+    print(QueryEngine(EventStore(db)).ask(" ".join(a.question), now=_dt(a.now)))
 
-                # Signal 3: Location (Room & Surface)
-                room_raw = results["room"].get("room", "") if results.get("room") else ""
-                surface_raw = results["surface"].get("surface", "") if results.get("surface") else ""
-                room_clean = _clean_prompt(room_raw)
-                surface_clean = _clean_prompt(surface_raw)
-                if room_clean and surface_clean:
-                    location_str = f"{room_clean} (surface: {surface_clean})"
-                elif room_clean:
-                    location_str = room_clean
-                else:
-                    location_str = "Unknown"
 
-                # Hand flow / movement direction
-                flow_info = ""
-                if results["hands"]:
-                    for h in results["hands"]:
-                        if "flow" in h and h["flow"].get("direction") and h["flow"]["direction"] != "stationary":
-                            flow_info = f" | Hand Flow: {h['flow']['direction']} (mag: {h['flow'].get('magnitude', 0.0):.1f})"
-                            break
+def cmd_events(a):
+    from modules.storage import EventStore
+    for e in EventStore(C.SIM_DB_PATH if a.simulated else a.db).all()[-a.limit:]:
+        print(f"{e.ts:%Y-%m-%d %H:%M:%S}  {e.action:7s}  {e.object:12s}  {e.landmark or 'unknown':18s} "
+              f"conf={e.confidence:.2f}" + (f"  {e.note}" if e.note else ""))
 
-                print(f"\n{'━'*64}")
-                print(f" [Time: {timestamp:5.2f}s]  3 SIGNALS DETECTED:")
-                print(f"  1. ACTION   : {action_clean} (conf: {action_score:.2f})")
-                print(f"  2. OBJECT   : {object_str}")
-                print(f"  3. LOCATION : {location_str}{flow_info}")
-                if results.get("event"):
-                    print(f"  --------------------------------------------------------------")
-                    print(f"  ⭐ EVENT BOUND: {results['event']}")
-                print(f"{'━'*64}")
-            # Draw bounding boxes if objects or hands were found
-            if results["motion"]:
-                if results["objects"]:
-                    for obj in results["objects"]:
-                        x1, y1, x2, y2 = obj["box"]
-                        label = obj["label"]
-                        conf = obj["confidence"]
-                        # Draw rectangle and label
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                        cv2.putText(
-                            frame,
-                            f"{label} {conf:.2f}",
-                            (x1, max(15, y1 - 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (0, 255, 0),
-                            2,
-                        )
-                if results["hands"]:
-                    for hand in results["hands"]:
-                        x1, y1, x2, y2 = hand["box"]
-                        label = hand["label"]
-                        flow_text = ""
-                        if "flow" in hand:
-                            flow_text = f" | {hand['flow']['direction']}"
-                        # Draw rectangle and label for hands
-                        cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
-                        cv2.putText(
-                            frame,
-                            f"{label} Hand{flow_text}",
-                            (x1, max(15, y1 - 10)),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.5,
-                            (255, 0, 0),
-                            2,
-                        )
 
-            # ── Action subtitle overlay (separate from pause banner) ──────────
-            # Shows top predicted action as a subtitle at the bottom of the frame.
-            # Remove or comment out this block if you no longer want on-screen actions.
-            h_f, w_f = frame.shape[:2]
-            subtitle_text = ""
-            if results.get("actions"):
-                top_action = results["actions"][0]
-                subtitle_text = f"Action: {top_action['action']}  ({top_action['score']:.2f})"
-            if subtitle_text:
-                sub_font       = cv2.FONT_HERSHEY_SIMPLEX
-                sub_scale      = 0.55
-                sub_thickness  = 1
-                (tw, th), _    = cv2.getTextSize(subtitle_text, sub_font, sub_scale, sub_thickness)
-                bar_h          = th + 20          # padding above and below text
-                bar_y1         = h_f - bar_h - 4  # near the very bottom
-                # Translucent dark strip
-                sub_overlay    = frame.copy()
-                cv2.rectangle(sub_overlay, (0, bar_y1), (w_f, h_f), (0, 0, 0), -1)
-                cv2.addWeighted(sub_overlay, 0.6, frame, 0.4, 0, frame)
-                # White subtitle text, centred horizontally
-                text_x = (w_f - tw) // 2
-                text_y = bar_y1 + th + 8
-                cv2.putText(
-                    frame,
-                    subtitle_text,
-                    (text_x, text_y),
-                    sub_font,
-                    sub_scale,
-                    (255, 255, 255),
-                    sub_thickness,
-                    cv2.LINE_AA,
-                )
-            # ── end subtitle overlay ──────────────────────────────────────────
+def cmd_habits(a):
+    from modules.habits import check_missed
+    from modules.storage import EventStore
+    now = _dt(a.now) or datetime.now()
+    db = C.SIM_DB_PATH if a.simulated else a.db
+    habits, alerts = check_missed(EventStore(db), now)
+    if a.simulated:
+        print("*** SIMULATED DATA ***")
+    print(f"Habits learned (as of {now:%Y-%m-%d %H:%M}):")
+    for h in habits:
+        print("  - " + h.describe())
+    if not habits:
+        print(f"  none yet (need >= {C.HABIT_MIN_DAYS} days of history)")
+    print("Alerts:" if alerts else "No missed routines.")
+    for al in alerts:
+        print("  ! " + al)
 
-            # Display frame
-            cv2.imshow("Mnemo System", frame)
-            # Key handling: SPACE = pause/resume, Q = quit
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                print("Quitting...")
-                break
-            elif key == ord(" "):
-                paused = not paused
-                print("[Mnemo] Paused." if paused else "[Mnemo] Resumed.")
 
-            # Pause loop — freeze the current frame until SPACE is pressed again
-            while paused:
-                # Draw a small semi-transparent PAUSED hint near the top-centre
-                overlay = frame.copy()
-                h, w = overlay.shape[:2]
-                hint_y1 = int(h * 0.08)   # ~8 % from the top
-                hint_y2 = hint_y1 + 28
-                cv2.rectangle(overlay, (0, hint_y1), (w, hint_y2), (0, 0, 0), -1)
-                cv2.addWeighted(overlay, 0.55, frame, 0.45, 0, frame)
-                cv2.putText(
-                    frame,
-                    "PAUSED  |  SPACE = resume   Q = quit",
-                    (w // 2 - 195, hint_y1 + 20),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.55,
-                    (220, 220, 220),
-                    1,
-                    cv2.LINE_AA,
-                )
-                cv2.imshow("Mnemo System", frame)
-                pause_key = cv2.waitKey(30) & 0xFF
-                if pause_key == ord(" "):
-                    paused = False
-                    print("[Mnemo] Resumed.")
-                elif pause_key == ord("q"):
-                    print("Quitting...")
-                    paused = False   # exit inner loop
-                    raise KeyboardInterrupt  # bubble up to break the outer loop
-    except KeyboardInterrupt:
-        pass  # clean exit from quit-while-paused path
-    except Exception as e:
-        print(f"Error occurred: {e}")
-    finally:
-        cv2.destroyAllWindows()
-        print("Pipeline finished.")
+def cmd_simulate(a):
+    from modules.habits import simulate_days
+    from modules.storage import EventStore
+    store = EventStore(C.SIM_DB_PATH)
+    store.clear()
+    end = _dt(a.end) or datetime.now()
+    simulate_days(store, a.days, end, miss_last_pill=not a.no_miss)
+    print(f"Wrote {len(store.all())} SIMULATED events to {C.SIM_DB_PATH}")
+    print(f'Try: python mnemo.py habits --simulated --now "{end:%Y-%m-%d} 22:30"')
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Mnemo personal memory assistant")
+    ap.add_argument("--db", default=C.DB_PATH)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    r = sub.add_parser("run", help="process a video file or camera")
+    r.add_argument("source")
+    r.add_argument("--start", help='real start time of the recording, e.g. "2026-10-15 08:30"')
+    r.add_argument("--mode", choices=["rules", "model"], default="rules")
+    r.add_argument("--show", action="store_true", help="display the video with overlays (nothing is saved)")
+    r.add_argument("--no-landmarks", action="store_true")
+    r.set_defaults(fn=cmd_run)
+
+    e = sub.add_parser("enroll", help="build the landmark index from data/enroll/")
+    e.add_argument("--dir", default=C.ENROLL_DIR)
+    e.add_argument("--check", action="store_true", help="also run the leave-one-out accuracy check")
+    e.add_argument("--check-only", action="store_true", help="check the existing index without rebuilding")
+    e.set_defaults(fn=cmd_enroll)
+
+    q = sub.add_parser("ask", help='ask e.g. "where is my wallet?"')
+    q.add_argument("question", nargs="+")
+    q.add_argument("--now")
+    q.add_argument("--simulated", action="store_true")
+    q.set_defaults(fn=cmd_ask)
+
+    ev = sub.add_parser("events", help="list stored events")
+    ev.add_argument("--limit", type=int, default=50)
+    ev.add_argument("--simulated", action="store_true")
+    ev.set_defaults(fn=cmd_events)
+
+    h = sub.add_parser("habits", help="show learned routines and missed-routine alerts")
+    h.add_argument("--now")
+    h.add_argument("--simulated", action="store_true")
+    h.set_defaults(fn=cmd_habits)
+
+    s = sub.add_parser("simulate", help="generate SIMULATED multi-day history for the habit demo")
+    s.add_argument("--days", type=int, default=14)
+    s.add_argument("--end", help="last simulated day (default today)")
+    s.add_argument("--no-miss", action="store_true", help="don't skip the last evening's pills")
+    s.set_defaults(fn=cmd_simulate)
+
+    a = ap.parse_args(argv)
+    a.fn(a)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

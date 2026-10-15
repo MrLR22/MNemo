@@ -1,2 +1,14 @@
-data/
 __pycache__/
+.pytest_cache/
+.mnemovenv/
+# personal data: your footage, labels, features, event database, landmark index
+data/
+outputs/
+models/
+runs/
+checkpoints/
+evaluation_results/
+screenshots/
+yolov8s-worldv2.pt
+mnemo_code.zip
+weights/
