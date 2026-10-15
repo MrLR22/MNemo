@@ -20,7 +20,13 @@ def _dt(s: str | None) -> datetime | None:
     return datetime.fromisoformat(s) if s else None
 
 
+def _objects(a):
+    if getattr(a, "objects", None):
+        C.set_objects(a.objects)
+
+
 def cmd_run(a):
+    _objects(a)
     from modules.pipeline import MnemoPipeline
     from modules.storage import EventStore
     source = int(a.source) if a.source.isdigit() else a.source
@@ -104,6 +110,7 @@ def main(argv=None):
     r.add_argument("--mode", choices=["rules", "model"], default="rules")
     r.add_argument("--show", action="store_true", help="display the video with overlays (nothing is saved)")
     r.add_argument("--no-landmarks", action="store_true")
+    r.add_argument("--objects", nargs="+", help="objects to track instead of keys/wallet/phone/pill_bottle")
     r.set_defaults(fn=cmd_run)
 
     e = sub.add_parser("enroll", help="build the landmark index from data/enroll/")

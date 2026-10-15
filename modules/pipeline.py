@@ -30,6 +30,7 @@ class MnemoPipeline:
         self.perception = perception or Perception()
         self.buffer = FrameBuffer()
         self.features = FeatureExtractor()
+        self.last_probs = None          # model mode: latest P(none, pickup, putdown), for display
 
         if mode == "rules":
             self.engine = RuleEngine()
@@ -70,6 +71,7 @@ class MnemoPipeline:
             pending = self.engine.update(obs)
         else:
             probs = self.stream.step(feat).numpy()
+            self.last_probs = probs
             focus = self.features.focus_obj
             near = any(d.obj == focus and nearest_hand(d, obs.hands)[1] < 2 * C.CONTACT_DIST
                        for d in obs.detections)

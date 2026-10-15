@@ -40,7 +40,7 @@ class ClipEmbedder:
 
     @property
     def logit_scale(self) -> float:
-        return float(self.model.logit_scale.exp())
+        return float(self.model.logit_scale.detach().exp())
 
     def embed(self, images_bgr: list[np.ndarray]) -> np.ndarray:
         from PIL import Image

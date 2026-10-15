@@ -72,7 +72,8 @@ class ObjectDetector:
 
     def detect(self, image_bgr: np.ndarray) -> list[Detection]:
         h, w = image_bgr.shape[:2]
-        result = self.model(image_bgr, conf=self.conf, imgsz=C.YOLO_IMGSZ, verbose=False)[0]
+        # agnostic NMS: one label per box (YOLO-World otherwise labels one lid as both 'lid' and 'bowl')
+        result = self.model(image_bgr, conf=self.conf, imgsz=C.YOLO_IMGSZ, agnostic_nms=True, verbose=False)[0]
         detections = []
         for box in result.boxes:
             obj = self._canonical(self.names[int(box.cls.item())])

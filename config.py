@@ -28,6 +28,18 @@ OBJECT_SYNONYMS = {
                     "tablet", "tablets", "meds"],
 }
 
+
+
+def set_objects(names: list[str]):
+    """Track a different set of objects at runtime (e.g. cup/plate/lid for an EPIC-KITCHENS demo).
+    Names are used directly as YOLO-World prompts ('pill_bottle' → 'pill bottle')."""
+    global TARGET_OBJECTS, YOLOWORLD_PROMPTS, OBJECT_SYNONYMS
+    TARGET_OBJECTS = list(names)
+    YOLOWORLD_PROMPTS = {n: YOLOWORLD_PROMPTS.get(n, n.replace("_", " ")) for n in names}
+    OBJECT_SYNONYMS = {n: OBJECT_SYNONYMS.get(n, sorted({n, n.replace("_", " "), n.replace("_", " ") + "s"}))
+                       for n in names}
+
+
 # ── M2: PERCEPTION ──
 HAND_MODEL = _p("hand_landmarker.task")
 OBJECT_BACKEND = "auto"       # "auto" | "finetuned" | "yoloworld" | "coco"  (see modules/object_detector.py)

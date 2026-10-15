@@ -17,10 +17,18 @@ from modules.types import Event
 PRETTY = {"keys": "keys", "wallet": "wallet", "phone": "phone", "pill_bottle": "pill bottle"}
 
 
-def find_object(text: str) -> str | None:
+def pretty(obj: str) -> str:
+    return PRETTY.get(obj, obj.replace("_", " "))
+
+
+def find_object(text: str, extra: list[str] = ()) -> str | None:
+    """extra: object names present in the store (e.g. 'plate' after a kitchen demo)."""
     t = text.lower()
+    syns = {o: list(v) for o, v in C.OBJECT_SYNONYMS.items()}
+    for o in extra:
+        syns.setdefault(o, sorted({o, o.replace("_", " "), o.replace("_", " ") + "s"}))
     # longest synonym first, so "pill bottle" beats "pill"
-    pairs = sorted(((syn, obj) for obj, syns in C.OBJECT_SYNONYMS.items() for syn in syns),
+    pairs = sorted(((syn, obj) for obj, ss in syns.items() for syn in ss),
                    key=lambda p: len(p[0]), reverse=True)
     for syn, obj in pairs:
         if re.search(rf"\b{re.escape(syn)}\b", t):
@@ -43,7 +51,7 @@ def place(landmark: str | None) -> str:
 
 
 def describe(ev: Event, now: datetime) -> str:
-    name = PRETTY.get(ev.object, ev.object)
+    name = pretty(ev.object)
     if ev.action == "putdown":
         s = f"you put your {name} down at {place(ev.landmark)} {when(ev.ts, now)}"
     else:
@@ -60,12 +68,12 @@ class QueryEngine:
     def ask(self, question: str, now: datetime | None = None) -> str:
         now = now or datetime.now()
         q = question.lower().strip()
-        obj = find_object(q)
+        obj = find_object(q, self.store.objects())
 
         if re.search(r"\b(what happened|what did i do|today'?s events|summary)\b", q):
             return self._day_summary(now)
         if obj is None:
-            return ("I can answer about: " + ", ".join(PRETTY.values()) +
+            return ("I can answer about: " + ", ".join(pretty(o) for o in (self.store.objects() or C.TARGET_OBJECTS)) +
                     ". Try: 'where is my wallet?' or 'did I take my pills today?'")
         if re.search(r"\bhistory\b|\ball\b.*\btimes\b", q):
             return self._history(obj, now)
@@ -74,11 +82,11 @@ class QueryEngine:
         if re.search(r"\bwhen did i\b.*\bpick", q):
             ev = self.store.latest(obj, "pickup", before=now)
             return (describe(ev, now).capitalize() + ".") if ev else \
-                f"I have no record of you picking up your {PRETTY[obj]}."
+                f"I have no record of you picking up your {pretty(obj)}."
         return self._where(obj, now)
 
     def _where(self, obj: str, now: datetime) -> str:
-        name = PRETTY[obj]
+        name = pretty(obj)
         ev = self.store.latest(obj, before=now)
         if ev is None:
             return f"I haven't seen your {name} yet."
@@ -101,7 +109,7 @@ class QueryEngine:
     def _did_take(self, obj: str, now: datetime) -> str:
         start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         evs = [e for e in self.store.between(start, now + timedelta(seconds=1), obj) if e.action == "pickup"]
-        name = PRETTY[obj]
+        name = pretty(obj)
         if not evs:
             return f"No — I have no record of you picking up your {name} today."
         times = ", ".join(e.ts.strftime("%I:%M %p").lstrip("0") for e in evs)
@@ -110,7 +118,7 @@ class QueryEngine:
     def _history(self, obj: str, now: datetime) -> str:
         evs = self.store.between(now - timedelta(days=2), now + timedelta(seconds=1), obj)
         if not evs:
-            return f"No events for your {PRETTY[obj]} in the last 2 days."
+            return f"No events for your {pretty(obj)} in the last 2 days."
         return "\n".join("- " + describe(e, now) for e in evs[-15:])
 
     def _day_summary(self, now: datetime) -> str:

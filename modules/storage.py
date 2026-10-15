@@ -68,6 +68,9 @@ class EventStore:
     def all(self) -> list[Event]:
         return [self._to_event(r) for r in self.conn.execute("SELECT * FROM events ORDER BY ts, id")]
 
+    def objects(self) -> list[str]:
+        return [r[0] for r in self.conn.execute("SELECT DISTINCT object FROM events ORDER BY object")]
+
     def clear(self):
         self.conn.execute("DELETE FROM events")
         self.conn.commit()
