@@ -174,6 +174,8 @@ def test_v2_line_format():
                             {"verb": "puts down", "object": "plate", "where": None}]
     assert p["states"] == [{"object": "oven", "state": "open"}, {"object": "fridge door", "state": "closed"}]
     assert parse_output("PLACE: hallway")["actions"] == []                       # nothing done
+    arrows = parse_output("DID: opens | oven | ->\nDID: picks up | plate | -> cupboard")["actions"]
+    assert [a["where"] for a in arrows] == [None, "cupboard"]
     cut = parse_output("PLACE: kitchen\nDID: opens | drawer | kitch")            # cut off mid-line: kept
     assert cut["actions"][0]["verb"] == "opens"
     assert parse_output('{"place": "desk", "actions": [{"verb": "types", "object": "laptop"}]}')["actions"][0]["verb"] == "types"

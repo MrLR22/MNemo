@@ -1,0 +1,268 @@
+<title>Mnemo Progress Demo</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one reading column; each section answers one question the guide will ask, real outputs only */
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --ink: #14171a; --muted: #586270; --line: #e1e5ea;
+  --ours: #2a78d6; --ours-tint: rgba(42,120,214,.10); --base: #eb6834; --base-tint: rgba(235,104,52,.10);
+  --good: #1b7f4b; --bad: #b3261e; --warn: #9a5b00; --warn-tint: rgba(237,161,0,.14);
+  --plate: #fcfcfb;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", Roboto, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #111316; --surface: #1a1d21; --ink: #eceef1; --muted: #a2abb7; --line: #2b3038;
+  --ours: #3987e5; --ours-tint: rgba(57,135,229,.16); --base: #d95926; --base-tint: rgba(217,89,38,.16);
+  --good: #5cc28a; --bad: #f08a80; --warn: #e3a440; --warn-tint: rgba(227,164,64,.14); color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #111316; --surface: #1a1d21; --ink: #eceef1; --muted: #a2abb7; --line: #2b3038;
+  --ours: #3987e5; --ours-tint: rgba(57,135,229,.16); --base: #d95926; --base-tint: rgba(217,89,38,.16);
+  --good: #5cc28a; --bad: #f08a80; --warn: #e3a440; --warn-tint: rgba(227,164,64,.14); color-scheme: dark }
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--ink); font: 15px/1.55 var(--f-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 32px 64px }
+main { max-width: 960px; margin: 0 auto; display: grid; gap: 48px }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15 }
+h1 { font-size: 44px; font-weight: 600; letter-spacing: -.01em }
+h2 { font-size: 26px; font-weight: 600 }
+h3 { font-size: 15px; font-weight: 600; font-family: var(--f-body) }
+p { margin: 0; max-width: 68ch }
+.muted { color: var(--muted) }
+.small { font-size: 13px }
+.eyebrow { font: 500 12px/1 var(--f-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+section { display: grid; gap: 16px }
+a { color: var(--ours) }
+a:focus-visible, button:focus-visible, input:focus-visible { outline: 2px solid var(--ours); outline-offset: 2px }
+.mono { font-family: var(--f-mono); font-variant-numeric: tabular-nums }
+
+header { display: grid; gap: 14px }
+.findings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px }
+.finding { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 6px; align-content: start }
+.finding .num { font: 600 30px/1 var(--f-display); font-variant-numeric: tabular-nums }
+.finding .num small { font: 500 14px var(--f-body); color: var(--muted) }
+
+.pipeline { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; counter-reset: step }
+.stage { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px; display: grid; gap: 4px; align-content: start }
+.stage.ours { border-color: var(--ours); background: var(--ours-tint) }
+.stage b { font-family: var(--f-display); font-size: 16px }
+.tag { display: inline-block; font: 500 11px/1.6 var(--f-mono); padding: 0 6px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); width: fit-content }
+.tag.ours { border-color: var(--ours); color: var(--ours) }
+
+.strip { display: grid; grid-template-columns: repeat(15, minmax(0, 1fr)); gap: 3px }
+.win { height: 34px; border-radius: 4px; display: grid; place-items: center; font: 500 11px var(--f-mono); color: var(--muted); border: 1px dashed var(--line) }
+.win.called { background: var(--ours-tint); border: 1px solid var(--ours); color: var(--ink) }
+.legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--muted); align-items: center }
+.sw { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px }
+
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; display: grid; gap: 10px; align-content: start }
+.rows { display: grid; gap: 2px; max-height: 420px; overflow-y: auto; padding-right: 4px }
+.row { display: grid; grid-template-columns: 4.6em minmax(0, 1fr) auto; gap: 10px; font-size: 14px; padding: 3px 0; border-bottom: 1px solid var(--line); align-items: baseline }
+.row:last-child { border-bottom: 0 }
+.row .t { font: 13px var(--f-mono); color: var(--muted); font-variant-numeric: tabular-nums }
+.row .what { min-width: 0; overflow-wrap: anywhere }
+.badge { font: 500 11px var(--f-mono); padding: 0 6px; border-radius: 4px; white-space: nowrap }
+.badge.state { background: var(--ours-tint); color: var(--ours) }
+.badge.yes { color: var(--good) } .badge.no { color: var(--bad) }
+
+.diary-tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center }
+input[type=search] { flex: 1 1 260px; min-width: 0; font: 15px var(--f-body); padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink) }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+button.chip { font: 13px var(--f-body); padding: 5px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer }
+button.chip[aria-pressed=true] { border-color: var(--ours); background: var(--ours-tint) }
+.diary .row { grid-template-columns: 9.5em minmax(0, 1fr) auto }
+.alerts { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px }
+.alert { border-left: 3px solid var(--warn); background: var(--warn-tint); border-radius: 0 8px 8px 0; padding: 8px 10px; font-size: 14px }
+.alert .mono { color: var(--muted); font-size: 12px; display: block }
+
+.qa { display: grid; grid-template-columns: minmax(0, 300px) minmax(0, 1fr); gap: 16px }
+.qlist { display: grid; gap: 2px; max-height: 470px; overflow-y: auto; padding-right: 4px; align-content: start }
+.qbtn { text-align: left; font: 14px var(--f-body); background: none; border: 0; border-radius: 6px; padding: 6px 8px; color: var(--ink); cursor: pointer; display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 8px; align-items: baseline }
+.qbtn:hover { background: var(--ours-tint) }
+.qbtn[aria-selected=true] { background: var(--ours-tint); font-weight: 600 }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block }
+.answer { display: grid; gap: 12px; align-content: start }
+.who { display: grid; gap: 4px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface) }
+.who.mnemo { border-color: var(--ours) }
+.verdict { font: 600 12px var(--f-mono) }
+.verdict.ok { color: var(--good) } .verdict.wrong { color: var(--bad) }
+
+figure { margin: 0; display: grid; gap: 8px }
+figure img { width: 100%; border-radius: 10px; border: 1px solid var(--line); background: var(--plate) }
+figcaption { font-size: 13px; color: var(--muted); max-width: 72ch }
+.figs { display: grid; gap: 28px }
+ul.notes { margin: 0; padding-left: 18px; display: grid; gap: 4px; max-width: 72ch }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; display: grid; gap: 6px }
+
+@media (max-width: 760px) {
+  h1 { font-size: 34px }
+  .findings, .cols, .qa { grid-template-columns: 1fr }
+  .pipeline { grid-template-columns: 1fr 1fr }
+  .strip { grid-template-columns: repeat(8, minmax(0, 1fr)) }
+  .diary .row { grid-template-columns: 5.2em minmax(0, 1fr) auto }
+  .diary .row .end { display: none }
+}
+</style>
+
+<main>
+  <header>
+    <span class="eyebrow">Final-year project · progress demo</span>
+    <h1>Mnemo</h1>
+    <p>A chest-worn camera memory assistant for people with short-term memory problems. It writes a timed text diary of what the wearer does with their hands, keeps no video, and answers questions such as “Did I close the fridge?” only from that diary, or says it didn’t see it.</p>
+    <p class="small muted">Everything on this page is real output from the Kaggle runs (Qwen3-VL-4B on a T4 GPU) on EPIC-KITCHENS videos of five people our model never saw in training. Full design: <a href="https://claude.ai/code/artifact/3fc08e93-7207-4840-9869-4bb14245f547">Mnemo System Architecture</a>.</p>
+    <div class="findings" id="findings"></div>
+  </header>
+
+  <section aria-labelledby="how">
+    <span class="eyebrow">How it works</span>
+    <h2 id="how">Five layers, three of them ours</h2>
+    <div class="pipeline">
+      <div class="stage"><b>Capture</b><span class="small muted">Chest camera, 10 frames/s. Frames stay in RAM.</span><span class="tag">standard</span></div>
+      <div class="stage ours"><b>Trigger</b><span class="small">Our HOI-TCN model scores each 4 s for hand–object interaction; quiet windows are skipped.</span><span class="tag ours">ours</span></div>
+      <div class="stage"><b>Describe</b><span class="small muted">Qwen3-VL-4B writes what happened, in short lines.</span><span class="tag">pre-trained</span></div>
+      <div class="stage ours"><b>Memory</b><span class="small">Timed diary plus open/closed, on/off states that re-check themselves.</span><span class="tag ours">ours</span></div>
+      <div class="stage ours"><b>Answer</b><span class="small">Only from diary lines, with the time, or “I didn’t see that”.</span><span class="tag ours">ours</span></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="minute">
+    <span class="eyebrow">One minute through the system</span>
+    <h2 id="minute">What Mnemo wrote for one minute, next to what really happened</h2>
+    <p class="muted" id="ex-intro"></p>
+    <div class="strip" id="strip" aria-label="Fifteen 4-second windows and the trigger's decision"></div>
+    <div class="legend"><span><span class="sw" style="background:var(--ours-tint);border:1px solid var(--ours)"></span>sent to the big model (trigger score shown)</span><span><span class="sw" style="border:1px dashed var(--muted)"></span>skipped: no hand interaction</span></div>
+    <div class="cols">
+      <div class="panel"><h3>Mnemo’s diary</h3><div class="rows" id="ex-log"></div></div>
+      <div class="panel"><h3>EPIC ground truth <span class="muted small" id="ex-score"></span></h3><div class="rows" id="ex-truth"></div></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="morning">
+    <span class="eyebrow">A whole morning</span>
+    <h2 id="morning">The diary of a 2.4-hour morning</h2>
+    <p class="muted" id="m-intro"></p>
+    <div class="panel">
+      <h3>Last seen open or on at the end of the morning</h3>
+      <div class="alerts" id="alerts"></div>
+      <p class="small muted">The morning joins 20 minutes from five different kitchens, so some of these were closed in a kitchen the camera never returned to. In one real home, the state check keeps asking about each of them for 10 minutes.</p>
+    </div>
+    <div class="panel diary">
+      <div class="diary-tools">
+        <label for="q" class="eyebrow" style="flex-basis:100%">Search the diary (keyword search, no AI)</label>
+        <input type="search" id="q" placeholder="fridge, oven, plate, tap …" autocomplete="off">
+        <div class="chips" role="group" aria-label="Quick searches">
+          <button class="chip" data-q="fridge" aria-pressed="false">fridge</button>
+          <button class="chip" data-q="oven" aria-pressed="false">oven</button>
+          <button class="chip" data-q="tap" aria-pressed="false">tap</button>
+          <button class="chip" data-q="plate" aria-pressed="false">plate</button>
+          <button class="chip" id="only-state" aria-pressed="false">state memory rows only</button>
+        </div>
+      </div>
+      <p class="small muted" id="d-count"></p>
+      <div class="rows" id="diary" style="max-height:480px"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="ask">
+    <span class="eyebrow">Ask Mnemo</span>
+    <h2 id="ask">Questions about the morning: Mnemo vs asking the model directly</h2>
+    <p class="muted" id="ask-intro"></p>
+    <div class="qa">
+      <div class="panel"><div class="qlist" id="qlist" role="listbox" aria-label="Questions"></div></div>
+      <div class="answer" id="answer" aria-live="polite"></div>
+    </div>
+    <div class="panel">
+      <h3>“When did I …?” answered from the diary</h3>
+      <div class="rows" id="when" style="max-height:300px"></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="results">
+    <span class="eyebrow">Measured results</span>
+    <h2 id="results">What the numbers show</h2>
+    <div class="figs">
+      <figure><img src="fig_timespan.png" alt="Accuracy over 1 minute versus a 2.4-hour morning. Asking the model directly drops from 88% to 66%; Mnemo stays at 76%."><figcaption>For one minute, the big model can see almost everything in 32 frames. Over a morning it sees one frame every few minutes, while Mnemo’s diary keeps every moment with its time.</figcaption></figure>
+      <figure><img src="fig_states.png" alt="State memory raises opens and closes found from 25% to 43%, all actions from 26% to 31%, and question accuracy from 77% to 80%."><figcaption>Same model answers with and without our state memory. On no clip did it find fewer opens or closes (95% bootstrap range of the gain: +4 to +24).</figcaption></figure>
+      <figure><img src="fig_trigger.png" alt="Actions found versus share of model calls. At 74% of calls the trigger finds 86 actions, a fixed rate 75."><figcaption>Every point compares the trigger with evenly spaced windows using the same number of model calls. The trigger wins at about a quarter of calls saved (95% range of the gain: +2 to +20 actions); with bigger savings the fixed rate is better.</figcaption></figure>
+    </div>
+    <ul class="notes small muted">
+      <li>Matching is strict: a log line counts only with the same verb and object class as the EPIC annotation (“package” is not “box”), so recall reads low (26–31%).</li>
+      <li>The trigger threshold 0.6 was chosen on these same clips; a confirmation run on unseen clips is prepared.</li>
+      <li>The morning test has 38 questions, so its counts are small.</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>Data: EPIC-KITCHENS-100 (University of Bristol), test people P02, P06, P08, P14, P26. Models: Qwen3-VL-4B-Instruct, MediaPipe Hands, YOLOv8n, and our HOI-TCN (240,252 parameters).</span>
+    <span>Run of 16 October 2026 on a Kaggle T4. Stored: text only.</span>
+  </footer>
+</main>
+
+<script type="application/json" id="data">__DATA__</script>
+<script>
+(function () {
+  const D = JSON.parse(document.getElementById('data').textContent);
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const clean = s => String(s || '').replace(/^\s*->\s*|\s*->\s*$/g, '').trim();
+  const N = D.numbers, pct = x => Math.round(x * 100) + '%';
+  const clock = (base, s) => { const [h, m] = base.split(':').map(Number); const t = h * 3600 + m * 60 + Math.round(s); const p = n => String(n).padStart(2, '0'); return `${p(Math.floor(t / 3600))}:${p(Math.floor(t / 60) % 60)}:${p(t % 60)}`; };
+
+  $('findings').innerHTML = [
+    [pct(N.morning_acc_mnemo), `vs ${pct(N.morning_acc_direct)}`, 'of questions about a whole morning answered right, against asking the model directly'],
+    [`${N.state_ours}`, `vs ${N.state_plain} of ${N.state_total}`, 'opens, closes, on/off found with our state memory, against plain captions'],
+    [`${N.when_ok}/${N.when_total}`, 'right time', '“When did I …?” questions answered with the correct clock time; the direct model cannot tell time'],
+  ].map(([a, b, c]) => `<div class="finding"><span class="num">${a} <small>${b}</small></span><span class="small muted">${c}</span></div>`).join('');
+
+  const E = D.example, called = E.windows.filter(w => w.called).length;
+  $('ex-intro').textContent = `Clip ${E.clip} (EPIC-KITCHENS, person ${E.clip.slice(0, 3)}): the trigger sent ${called} of ${E.windows.length} four-second windows to the big model.`;
+  $('strip').innerHTML = E.windows.map(w => `<div class="win ${w.called ? 'called' : ''}" title="${w.t}–${w.t + 4} s · trigger ${w.score.toFixed(2)} · ${w.called ? 'described' : 'skipped'}">${w.score.toFixed(2)}</div>`).join('');
+  $('ex-log').innerHTML = E.log.map(r => `<div class="row"><span class="t">${r.t.toFixed(1)} s</span><span class="what">${esc(r.verb)} ${esc(r.object)}</span>${r.state ? '<span class="badge state">state</span>' : '<span></span>'}</div>`).join('');
+  $('ex-truth').innerHTML = E.truth.map(g => `<div class="row"><span class="t">${g.t.toFixed(1)} s</span><span class="what">${esc(g.narration)}</span><span class="badge ${g.found ? 'yes' : 'no'}">${g.found ? 'found' : 'missed'}</span></div>`).join('');
+  $('ex-score').textContent = `· ${E.found} of ${E.true} found, strict matching`;
+
+  const M = D.morning, log = M.log;
+  $('m-intro').textContent = `${M.clips} one-minute clips placed ${M.gap_min.toFixed(1)} minutes apart from ${M.start}, the way a day has bursts of activity and long gaps. Mnemo wrote ${log.length} diary rows; ${log.filter(r => r.state).length} of them came from the state memory.`;
+  $('alerts').innerHTML = M.alerts.map(a => `<div class="alert"><b>${esc(a.object)}</b> ${a.state === 'on' ? 'left on' : 'left open'}<span class="mono">last seen ${a.state} at ${a.since}</span></div>`).join('');
+
+  const CANON = { fridge: 'refrigerator', refrigerators: 'refrigerator', shut: 'close', closed: 'close', closes: 'close', opened: 'open', opens: 'open', faucet: 'tap', taps: 'tap', plates: 'plate', tablets: 'medicine', pills: 'medicine', pill: 'medicine', hob: 'stove', cooker: 'stove', picks: 'pick', picked: 'pick', puts: 'put', turned: 'turn', turns: 'turn', washes: 'wash', washed: 'wash' };
+  const STOP = new Set('a an the i my did do does what when where is was to of in on at and or me you'.split(' '));
+  const toks = s => String(s).toLowerCase().match(/[a-z]+/g)?.filter(w => !STOP.has(w)).map(w => CANON[w] || w) || [];
+  let onlyState = false;
+  function renderDiary() {
+    const q = toks($('q').value);
+    let rows = log.map(r => ({ r, k: new Set(toks(`${r.verb} ${r.object} ${clean(r.where)} ${clean(r.place)}`)) }));
+    if (onlyState) rows = rows.filter(x => x.r.state);
+    if (q.length) rows = rows.map(x => ({ ...x, s: q.filter(w => x.k.has(w)).length })).filter(x => x.s === q.length);
+    $('d-count').textContent = q.length || onlyState ? `${rows.length} of ${log.length} rows match` : `All ${log.length} rows, oldest first`;
+    $('diary').innerHTML = rows.slice(0, 400).map(({ r }) => {
+      const where = clean(r.where);
+      return `<div class="row"><span class="t">${r.start}<span class="end">–${r.end.slice(3)}</span></span><span class="what">${esc(r.verb)} <b>${esc(r.object)}</b>${where ? ` <span class="muted">→ ${esc(where)}</span>` : ''}</span>${r.state ? '<span class="badge state">state</span>' : '<span></span>'}</div>`;
+    }).join('') || '<p class="muted small">No diary rows match. Mnemo would answer: “I didn’t see that in my records.”</p>';
+  }
+  $('q').addEventListener('input', () => { document.querySelectorAll('button.chip[data-q]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.q === $('q').value.trim()))); renderDiary(); });
+  document.querySelectorAll('button.chip[data-q]').forEach(b => b.addEventListener('click', () => { $('q').value = b.dataset.q; $('q').dispatchEvent(new Event('input')); }));
+  $('only-state').addEventListener('click', e => { onlyState = !onlyState; e.currentTarget.setAttribute('aria-pressed', String(onlyState)); renderDiary(); });
+  renderDiary();
+
+  const Q = D.questions;
+  const ok = (q, yes) => yes === q.expect;
+  $('ask-intro').textContent = `${Q.length} questions generated from the ground truth: ${Q.filter(q => q.expect).length} about things that happened, ${Q.filter(q => !q.expect).length} about things that never happened (a “yes” there is an invented answer). The direct model saw 32 frames spread over the morning.`;
+  $('qlist').innerHTML = Q.map((q, i) => `<button class="qbtn" role="option" id="qb${i}" data-i="${i}" aria-selected="false"><span class="dot" style="background:${ok(q, q.mnemo_yes) ? 'var(--good)' : 'var(--bad)'}" title="Mnemo ${ok(q, q.mnemo_yes) ? 'right' : 'wrong'}"></span><span>${esc(q.q)}</span></button>`).join('');
+  function show(i) {
+    const q = Q[i];
+    document.querySelectorAll('.qbtn').forEach(b => b.setAttribute('aria-selected', String(+b.dataset.i === i)));
+    const v = yes => ok(q, yes) ? '<span class="verdict ok">right</span>' : `<span class="verdict wrong">${yes ? 'invented' : 'missed'}</span>`;
+    $('answer').innerHTML = `<div><span class="eyebrow">${q.expect ? 'This happened' : 'This never happened'}</span><h3 style="font-size:20px;font-family:var(--f-display);margin-top:6px">${esc(q.q)}</h3></div>
+      <div class="who mnemo"><span class="eyebrow" style="color:var(--ours)">Mnemo · from its diary</span><span>${esc(q.mnemo)}</span>${v(q.mnemo_yes)}</div>
+      <div class="who"><span class="eyebrow" style="color:var(--base)">Asking the model directly</span><span>${esc(q.direct)}</span>${v(q.direct_yes)}</div>`;
+  }
+  $('qlist').addEventListener('click', e => { const b = e.target.closest('.qbtn'); if (b) show(+b.dataset.i); });
+  const first = Q.findIndex(q => q.expect && q.mnemo_yes && !q.direct_yes);
+  show(first >= 0 ? first : 0);
+
+  $('when').innerHTML = D.when.map(w => `<div class="row"><span class="badge ${w.correct ? 'yes' : 'no'}">${w.correct ? 'right' : 'wrong'}</span><span class="what"><b>${esc(w.q)}</b> <span class="muted">${esc(w.answer)}</span></span><span></span></div>`).join('');
+})();
+</script>

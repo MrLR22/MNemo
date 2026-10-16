@@ -207,7 +207,7 @@ def _clean(x) -> str | None:
     return str(x or "").strip().lower() or None
 
 
-_NONE = {"", "-", "none", "n/a", "unknown", "null"}
+_NONE = {"", "-", "->", "none", "n/a", "unknown", "null"}
 
 
 def _parse_lines(text: str, out: dict) -> dict:
@@ -220,6 +220,7 @@ def _parse_lines(text: str, out: dict) -> dict:
             out["place"] = None if body.lower() in _NONE else body
         elif kind == "DID":
             parts = [x.strip().lower() for x in body.split("|")] + ["", ""]
+            parts[2] = parts[2].removeprefix("->").removesuffix("->").strip()   # "-> counter": the template's arrow
             if parts[0] not in _NONE:
                 out["actions"].append({"verb": parts[0], "object": None if parts[1] in _NONE else parts[1],
                                        "where": None if parts[2] in _NONE else parts[2]})
