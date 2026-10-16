@@ -76,6 +76,31 @@ def plan(segs_by_video: dict, durations: dict, n_windows: int, window_s: float) 
     return out
 
 
+def plan_random(segs_by_video: dict, durations: dict, n_windows: int, window_s: float, seed: int = 0) -> list[dict]:
+    """Ordinary (not busiest) stretches of video: random start times, round-robin over participants.
+    Used to measure a trigger fairly, because real days contain idle time too."""
+    import random
+    rng = random.Random(seed)
+    per_p = defaultdict(list)
+    for vid in sorted(segs_by_video):
+        if vid in durations and durations[vid] >= window_s:
+            per_p[vid.split("_")[0]].append(vid)
+    out, used = [], defaultdict(list)
+    people = sorted(per_p)
+    tries = 0
+    while len(out) < n_windows and people and tries < n_windows * 50:
+        p = people[len(out) % len(people)] if tries < n_windows * 25 else rng.choice(people)
+        vid = rng.choice(per_p[p])
+        t0 = round(rng.uniform(0, durations[vid] - window_s), 1)
+        tries += 1
+        if any(abs(t0 - u) < window_s for u in used[vid]):
+            continue                                        # no overlapping pieces
+        used[vid].append(t0)
+        n = sum(1 for s, e, *_ in segs_by_video[vid] if t0 <= e <= t0 + window_s)
+        out.append({"video": vid, "start": t0, "count": n})
+    return out
+
+
 def window_segments(segs: list[tuple], t0: float, window_s: float) -> list[tuple]:
     """Segments whose END is inside the window, re-timed relative to the window start."""
     return [(max(0.0, s - t0), e - t0, a, o) for s, e, a, o in segs if t0 <= e <= t0 + window_s]
@@ -107,6 +132,9 @@ def main():
     ap.add_argument("--window-s", type=float, default=60.0)
     ap.add_argument("--workers", type=int, default=4, help="pieces fetched in parallel")
     ap.add_argument("--participants", nargs="*", default=None)
+    ap.add_argument("--select", choices=["busiest", "random"], default="busiest",
+                    help="busiest = most pick/put per minute (training); random = ordinary stretches (trigger test)")
+    ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
     ns = argparse.Namespace(annotations=os.path.join(args.data, "EPIC_100_train.csv"),
@@ -118,7 +146,10 @@ def main():
     with open(os.path.join(args.data, "epic_55_splits.csv")) as f:
         split55 = {r["video_id"]: r["split"] for r in csv.DictReader(f)}
 
-    windows = plan(segs, durations, args.windows, args.window_s)
+    if args.select == "random":
+        windows = plan_random(segs, durations, args.windows, args.window_s, args.seed)
+    else:
+        windows = plan(segs, durations, args.windows, args.window_s)
     people = sorted({w["video"].split("_")[0] for w in windows})
     total = sum(w["count"] for w in windows)
     print(f"plan: {len(windows)} pieces of {args.window_s:.0f}s from {len(people)} participants, "
