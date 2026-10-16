@@ -108,12 +108,21 @@ def cmd_log(a):
     from modules.storage import EventStore
     from modules.vlm_logger import ActionLogger, VLMDescriber
     source = int(a.source) if a.source.isdigit() else a.source
+    call = scores = None
+    if a.trigger:
+        if isinstance(source, int):
+            raise SystemExit("--trigger needs a video file (live camera: not yet)")
+        from modules.hoi_gate import HOIGate, gate_decisions
+        scores, g = HOIGate(a.checkpoint).scores(source, a.max_seconds)
+        call = gate_decisions(scores, a.threshold)
+        print(f"trigger: VLM on {call.sum()}/{len(call)} windows ({g['gate_seconds']}s for hands/objects/HOI-TCN)")
     print(f"Loading {a.model} ...")
     logger = ActionLogger(VLMDescriber(a.model), EventStore(a.db))
-    rows, stats = logger.run(source, start_time=_dt(a.start), max_seconds=a.max_seconds)
+    rows, stats = logger.run(source, start_time=_dt(a.start), max_seconds=a.max_seconds, call=call, scores=scores)
     print(f"\n{stats['rows']} log rows stored in {a.db}")
-    print(f"{stats['video_seconds']}s of video, model time {stats['model_seconds']}s "
-          f"→ real-time factor {stats['real_time_factor']} (below 1.0 = faster than real time)")
+    print(f"{stats['video_seconds']}s of video, VLM on {stats['vlm_calls']}/{stats['windows']} windows, "
+          f"model time {stats['model_seconds']}s → real-time factor {stats['real_time_factor']} "
+          f"(below 1.0 = faster than real time)")
 
 
 def cmd_qa(a):
@@ -181,6 +190,9 @@ def main(argv=None):
     lg.add_argument("--start", help='real start time of the recording, e.g. "2026-10-17 08:30"')
     lg.add_argument("--model", default=C.VLM_MODEL)
     lg.add_argument("--max-seconds", type=float, default=None, help="only the first N seconds")
+    lg.add_argument("--trigger", action="store_true", help="only describe windows where HOI-TCN sees hand interaction")
+    lg.add_argument("--threshold", type=float, default=C.GATE_THRESHOLD)
+    lg.add_argument("--checkpoint", default=C.MODEL_CHECKPOINT)
     lg.set_defaults(fn=cmd_log)
 
     qa = sub.add_parser("qa", help='STAGE 2: answer any question from the action log')

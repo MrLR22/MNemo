@@ -158,6 +158,7 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     rows = []
     for w in windows:
+        w["start"] = float(int(w["start"]))         # whole seconds: the name <video>_w<start> is then exact
         w["name"] = f"{w['video']}_w{int(w['start'])}"
         for s, e, a, o in window_segments(segs[w["video"]], w["start"], args.window_s):
             rows.append({"video": w["name"], "start_s": f"{s:.2f}", "end_s": f"{e:.2f}", "action": a,

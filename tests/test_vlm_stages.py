@@ -19,7 +19,7 @@ NOW = datetime(2026, 10, 17, 21, 0)
 def test_parse_output_variants():
     good = parse_output('```json\n{"place": "kitchen", "actions": [{"verb": "Closes", "object": "Fridge door", "where": ""}]}\n```')
     assert good["place"] == "kitchen" and good["actions"] == [{"verb": "closes", "object": "fridge door", "where": None}]
-    assert parse_output('{"place": "", "actions": []}') == {"place": None, "actions": [], "raw": '{"place": "", "actions": []}'}
+    assert parse_output('{"place": "", "actions": []}') == {"place": None, "actions": [], "states": [], "raw": '{"place": "", "actions": []}'}
     assert parse_output("I cannot tell.")["actions"] == []
     assert parse_output('{"place": "desk", "actions": [{"object": "pen"}]}')["actions"] == []   # no verb → dropped
     assert parse_output('{"place": "desk", "actions": [ broken json')["actions"] == []

@@ -13,3 +13,7 @@ yolov8s-worldv2.pt
 mnemo_code.zip
 weights/
 model/*.pt
+# never commit: personal project brief, unzipped copies of the Kaggle code zip, Kaggle results
+PROJECT CONTEXT BRIEF*.md
+mnemo_code/
+results/

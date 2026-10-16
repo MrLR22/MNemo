@@ -4,6 +4,8 @@
 # Input : (B, T, 105) per-frame features from modules/features.py (hands, object, camera motion)
 # Output: event_logits (B, T, 3)  per-frame {0: none, 1: pickup, 2: putdown}
 #         hold_logits  (B, T)     per-frame "a hand is holding a tracked object" (auxiliary)
+#         act_logits   (B, T)     optional (act_head=True): "the hands are doing ANY action" (cut, stir, wash,
+#                                 open, ... not only pick/put): the interaction trigger's score
 #
 # Why this design (vs. the old CLIP + 2-transformer clip classifier):
 #   - Pick-up vs put-down is defined by hand/object motion over ~1-3 s, not scene appearance.
@@ -64,7 +66,7 @@ class TemporalBlock(nn.Module):
 
 class HOITCN(nn.Module):
     def __init__(self, hidden: int = 96, kernel: int = 3, dilations=(1, 2, 4, 8),
-                 dropout: float = 0.2, group_dropout: float = 0.1):
+                 dropout: float = 0.2, group_dropout: float = 0.1, act_head: bool = False):
         super().__init__()
         self.kernel = kernel
         self.dilations = tuple(dilations)
@@ -81,13 +83,15 @@ class HOITCN(nn.Module):
         self.blocks = nn.ModuleList(TemporalBlock(hidden, kernel, d, dropout) for d in dilations)
         self.event_head = nn.Conv1d(hidden, NUM_CLASSES, 1)
         self.hold_head = nn.Conv1d(hidden, 1, 1)
+        self.act_head = nn.Conv1d(hidden, 1, 1) if act_head else None
 
     @property
     def receptive_field(self) -> int:
         return 1 + 2 * (self.kernel - 1) * sum(self.dilations)
 
-    def forward(self, x: torch.Tensor, drop_groups: tuple[str, ...] = ()):
-        """x: (B, T, FEATURE_DIM). drop_groups zeroes whole modalities (ablation)."""
+    def forward(self, x: torch.Tensor, drop_groups: tuple[str, ...] = (), return_act: bool = False):
+        """x: (B, T, FEATURE_DIM). drop_groups zeroes whole modalities (ablation).
+        return_act: also return the any-action logits (None if the model has no act head)."""
         assert x.shape[-1] == FEATURE_DIM, f"expected {FEATURE_DIM} features, got {x.shape[-1]}"
         parts = []
         for name, sl in GROUPS.items():
@@ -102,7 +106,10 @@ class HOITCN(nn.Module):
         h = self.proj(torch.cat(parts, dim=-1).transpose(1, 2))        # (B, hidden, T)
         for blk in self.blocks:
             h = blk(h)
-        return self.event_head(h).transpose(1, 2), self.hold_head(h).squeeze(1)
+        ev, hold = self.event_head(h).transpose(1, 2), self.hold_head(h).squeeze(1)
+        if return_act:
+            return ev, hold, (self.act_head(h).squeeze(1) if self.act_head is not None else None)
+        return ev, hold
 
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
@@ -114,6 +121,7 @@ def load_model(path: str, device: str = "cpu") -> HOITCN:
     model.load_state_dict(ckpt["model_state_dict"])
     model.eval()
     model.threshold = ckpt.get("threshold")      # tuned on validation videos by train.py
+    model.gate_score = ckpt.get("gate_score", "event")   # which output the trigger uses (train_interaction.py)
     return model
 
 

@@ -35,6 +35,21 @@ def predict_video(model, feats: np.ndarray, device="cpu", drop_groups=()) -> np.
     return torch.softmax(ev[0], -1).cpu().numpy()
 
 
+@torch.no_grad()
+def predict_activity(model, feats: np.ndarray, device="cpu", score: str | None = None) -> np.ndarray:
+    """Per-frame trigger score: 'event' = 1 - P(none) (pick/put), 'act' = P(any action),
+    'max' = the larger of the two. Default: the model's own choice (made on validation people)."""
+    model.eval()
+    score = score or getattr(model, "gate_score", "event")
+    x = torch.from_numpy(feats).float().unsqueeze(0).to(device)
+    ev, _, act = model(x, return_act=True)
+    event = 1.0 - torch.softmax(ev[0], -1)[:, 0].cpu().numpy()
+    if act is None or score == "event":
+        return event
+    a = torch.sigmoid(act[0]).cpu().numpy()
+    return a if score == "act" else np.maximum(a, event)
+
+
 def evaluate_videos(model, vids, device="cpu", drop_groups=(), thresholds=THRESHOLDS, tol_s=1.0):
     """Event-level metrics at each threshold, summed over videos. Returns {thr: metrics}."""
     probs = [predict_video(model, v["feats"], device, drop_groups) for v in vids]

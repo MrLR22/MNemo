@@ -74,7 +74,30 @@ STAGE 2  question ──► matching log lines ──► same model answers ONLY
 - Command line: `python mnemo.py log VIDEO`, `python mnemo.py qa "did I close the fridge?" [--llm]`,
   `python mnemo.py activities`. Without `--llm` (no GPU) `qa` lists the matching log rows.
 - Model: `VLM_MODEL` in `config.py` (Qwen3-VL-4B fits a 16 GB T4; 2B is faster).
-- Not yet measured: accuracy and speed on the T4. Run the notebook first.
+- **Object-state memory** (`VLM_TRACK_STATES`): the VLM also reports fridge/door/drawer/tap/stove/light
+  open-closed / on-off; a change between windows becomes a row (`closes | fridge`), marked `[state]`.
+- **Interaction trigger** (`modules/hoi_gate.py`, `python mnemo.py log VIDEO --trigger`): HOI-TCN scores
+  each 4-s window; the VLM only runs where the hands interact (threshold `GATE_THRESHOLD`, plus one
+  window every `GATE_HEARTBEAT_S`).
+- **Kaggle (T4): `colab/mnemo_kaggle.ipynb`** runs everything: demo on one clip, then the benchmark
+  (`evaluation/benchmark.py`) on random EPIC minutes of the 5 test people:
+  - stage 1 log vs. EPIC ground truth (`evaluation/log_accuracy.py`, EPIC's own verb/noun classes)
+  - auto-generated yes/no questions incl. a no-memory "ask the VLM directly" baseline
+    (`evaluation/qa_benchmark.py`)
+  - optionally Experiment A
+- Results so far (8 random test minutes, 153 true actions, Qwen3-VL-4B on a T4, prompt v2):
+  - Trigger: at the same number of VLM calls, it finds as many or more actions than every-N-th
+    window (41% of calls: 24 vs 17 actions).
+  - Real-time factor 1.35 every window → 1.03 at threshold 0.6.
+  - Stage 2 hallucinates 2-4% vs 10% for asking the VLM directly, but the direct VLM wins on
+    1-minute clips (80% vs 64% yes-recall). That is why Experiment C (`evaluation/long_qa.py`)
+    tests a whole morning.
+- v3 (`VLM_PROMPT_VERSION`):
+  - state lines first
+  - stop at repeated lines: 27% of v2 rows were repeats, using 32% of VLM time
+  - state check: the VLM said "closed" only once in 120 windows, so open/on objects are asked about again
+- Negative result: an "any action" head (`model/train_interaction.py`) trained on the busiest EPIC
+  minutes (69% action frames) did not beat the pick/put trigger. Idle time is missing from that data.
 
 ## Training without personal data (pick/put model)
 | Part | How it works | Data |

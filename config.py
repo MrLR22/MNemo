@@ -129,8 +129,21 @@ VLM_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
 VLM_WINDOW_S = 4.0            # each description covers this many seconds
 VLM_FRAMES = 8                # frames per window (even number: the model pairs frames)
 VLM_FRAME_W = 448             # frames are downscaled to this width before the model
-VLM_MAX_NEW_TOKENS = 200
+VLM_MAX_NEW_TOKENS = 300      # actions + object states; a cut-off answer is still parsed per item
+VLM_TRACK_STATES = True       # also ask for fridge/door/tap/stove/light state → derive opens/closes
+VLM_FORMAT = "lines"          # "lines" (v2: short lines, fixed verb list, ~half the tokens) | "json" (v1)
+VLM_PROMPT_VERSION = "lines-v3"   # names cached answers/results: json (v1), lines (v2), lines-v3 (states first,
+                                  # state check, loop stop)
+VLM_MAX_ACTIONS = 8           # at most this many actions per window (stops repetition loops)
+STATE_CHECK_MAX_AGE_S = 600   # keep asking about an open/on object for up to 10 min after it was last seen
 QA_MAX_LOG_LINES = 60         # log lines given to the language model when answering
+
+# Interaction trigger (modules/hoi_gate.py): HOI-TCN decides which windows reach the VLM.
+GATE_THRESHOLD = 0.6          # window score = max over the window of 1 - P(no pick/put). 0.6 = the knee of the
+                              # EPIC benchmark curve (8 test minutes): 69% of VLM calls, 93% of actions seen
+GATE_HEARTBEAT_S = 20.0       # describe at least one window this often even when nothing happens
+GATE_HANGOVER = 0             # describe this many extra windows after a triggered one (did not help on EPIC)
+GATE_MOTION = None            # TUNE: hand-speed threshold (hoi_gate.window_motion); None = rule off
 
 # ── DEEP LEARNING MODEL (HOI-TCN) ──
 MODEL_CHECKPOINT = _p("models", "hoi_tcn.pt")

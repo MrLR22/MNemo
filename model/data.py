@@ -140,7 +140,8 @@ class WindowDataset(Dataset):
     WARMUP = 20
 
     def __init__(self, vids: list[dict], window: int = 128, samples_per_epoch: int = 4000,
-                 event_fraction: float = 0.5, seed: int = 0):
+                 event_fraction: float = 0.5, seed: int = 0, with_act: bool = False):
+        self.with_act = with_act          # also return v["act"] (any-action labels) + its mask
         self.vids = [v for v in vids if len(v["feats"]) >= 8]
         self.window = window
         self.n = samples_per_epoch
@@ -177,5 +178,13 @@ class WindowDataset(Dataset):
         if start > 0:
             lmask[:self.WARMUP] = 0.0
             hmask[:self.WARMUP] = 0.0
-        return (torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(hold),
-                torch.from_numpy(hmask), torch.from_numpy(lmask))
+        out = (torch.from_numpy(x), torch.from_numpy(y), torch.from_numpy(hold),
+               torch.from_numpy(hmask), torch.from_numpy(lmask))
+        if self.with_act:
+            act = np.zeros(W, np.float32)
+            amask = np.zeros(W, np.float32)
+            if "act" in v:
+                act[:n] = v["act"][sl]
+                amask[:n] = lmask[:n]
+            out += (torch.from_numpy(act), torch.from_numpy(amask))
+        return out
