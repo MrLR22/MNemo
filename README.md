@@ -62,7 +62,21 @@ pip install -r requirements.txt --extra-index-url https://download.pytorch.org/w
 python -m pytest            # 33 tests, ~1-2 min
 ```
 
-## Training without personal data (current plan)
+## Stage 1 + Stage 2: any action, any object (vision-language model, GPU)
+```
+STAGE 1  video ──(every 4 s, 8 frames)──► Qwen3-VL-4B ──► action log (text only):
+         09:14:02 | closes | fridge door | kitchen
+STAGE 2  question ──► matching log lines ──► same model answers ONLY from them (with times),
+         or "I didn't see that in my records."
+```
+- Colab (T4): `colab/mnemo_vlm.ipynb` loads the model once, logs a video, prints the
+  **real-time factor** (below 1.0 = keeps up with live video) and answers questions.
+- Command line: `python mnemo.py log VIDEO`, `python mnemo.py qa "did I close the fridge?" [--llm]`,
+  `python mnemo.py activities`. Without `--llm` (no GPU) `qa` lists the matching log rows.
+- Model: `VLM_MODEL` in `config.py` (Qwen3-VL-4B fits a 16 GB T4; 2B is faster).
+- Not yet measured: accuracy and speed on the T4. Run the notebook first.
+
+## Training without personal data (pick/put model)
 | Part | How it works | Data |
 |---|---|---|
 | Hands | MediaPipe (pre-trained) | none |

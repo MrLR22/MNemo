@@ -122,6 +122,16 @@ HABIT_CLUSTER_GAP_MIN = 90    # events further apart than this (minutes of day) 
 HABIT_MIN_WINDOW_MIN = 45     # habit window is at least +-45 min around the typical time
 HABIT_MAX_SPREAD_MIN = 30     # median absolute deviation above this = scattered, not a routine
 
+# ── STAGE 1: VISION-LANGUAGE ACTION LOGGER (any action, any object) ──
+# Qwen3-VL-4B: 8.9 GB of weights, fits a 16 GB T4 in float16 (the 8B does not). Swap freely:
+# "Qwen/Qwen3-VL-2B-Instruct" (faster), "Qwen/Qwen2.5-VL-3B-Instruct".
+VLM_MODEL = "Qwen/Qwen3-VL-4B-Instruct"
+VLM_WINDOW_S = 4.0            # each description covers this many seconds
+VLM_FRAMES = 8                # frames per window (even number: the model pairs frames)
+VLM_FRAME_W = 448             # frames are downscaled to this width before the model
+VLM_MAX_NEW_TOKENS = 200
+QA_MAX_LOG_LINES = 60         # log lines given to the language model when answering
+
 # ── DEEP LEARNING MODEL (HOI-TCN) ──
 MODEL_CHECKPOINT = _p("models", "hoi_tcn.pt")
 FEATURE_DIR = _p("data", "features")

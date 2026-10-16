@@ -20,6 +20,20 @@ CREATE TABLE IF NOT EXISTS events (
     source      TEXT                    -- which video/session produced it
 );
 CREATE INDEX IF NOT EXISTS idx_events_obj_ts ON events(object, ts);
+
+-- stage 1 (vision-language logger): any action, any object
+CREATE TABLE IF NOT EXISTS activities (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_start    TEXT NOT NULL,
+    ts_end      TEXT NOT NULL,
+    verb        TEXT,                   -- NULL = nothing done with the hands (place only)
+    object      TEXT,
+    place       TEXT,
+    where_      TEXT,                   -- where the object is / ended up
+    raw         TEXT,                   -- the model's full answer, for checking
+    source      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_activities_ts ON activities(ts_start);
 """
 
 
@@ -67,6 +81,41 @@ class EventStore:
 
     def all(self) -> list[Event]:
         return [self._to_event(r) for r in self.conn.execute("SELECT * FROM events ORDER BY ts, id")]
+
+    # ── activities (stage 1 log) ──
+    def add_activity(self, row: dict, source: str = "") -> int:
+        cur = self.conn.execute(
+            "INSERT INTO activities (ts_start, ts_end, verb, object, place, where_, raw, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (row["ts_start"].isoformat(timespec="seconds"), row["ts_end"].isoformat(timespec="seconds"),
+             row.get("verb"), row.get("object"), row.get("place"), row.get("where"), row.get("raw"), source))
+        self.conn.commit()
+        return cur.lastrowid
+
+    def extend_activity(self, activity_id: int, ts_end: datetime):
+        self.conn.execute("UPDATE activities SET ts_end = ? WHERE id = ?",
+                          (ts_end.isoformat(timespec="seconds"), activity_id))
+        self.conn.commit()
+
+    def activities(self, start: datetime | None = None, end: datetime | None = None) -> list[dict]:
+        q, args = "SELECT * FROM activities WHERE 1=1", []
+        if start:
+            q += " AND ts_end >= ?"
+            args.append(start.isoformat(timespec="seconds"))
+        if end:
+            q += " AND ts_start < ?"
+            args.append(end.isoformat(timespec="seconds"))
+        rows = []
+        for r in self.conn.execute(q + " ORDER BY ts_start, id", args):
+            d = dict(r)
+            d["ts_start"], d["ts_end"] = datetime.fromisoformat(d["ts_start"]), datetime.fromisoformat(d["ts_end"])
+            d["where"] = d.pop("where_")
+            rows.append(d)
+        return rows
+
+    def clear_activities(self):
+        self.conn.execute("DELETE FROM activities")
+        self.conn.commit()
 
     def objects(self) -> list[str]:
         return [r[0] for r in self.conn.execute("SELECT DISTINCT object FROM events ORDER BY object")]

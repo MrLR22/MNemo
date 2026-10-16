@@ -12,3 +12,4 @@ screenshots/
 yolov8s-worldv2.pt
 mnemo_code.zip
 weights/
+model/*.pt

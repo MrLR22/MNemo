@@ -8,6 +8,11 @@
 #   python mnemo.py events                           list stored events
 #   python mnemo.py habits [--now "2026-10-15 22:00"] [--simulated]
 #   python mnemo.py simulate --days 14               write SIMULATED history to a separate DB
+#
+# Stage 1 / stage 2 (vision-language model; needs a GPU such as the Colab T4):
+#   python mnemo.py log VIDEO [--start ...]          video → action log (any action, any object)
+#   python mnemo.py qa "did I close the fridge?" [--llm]   answer from the action log
+#   python mnemo.py activities                       list the action log
 
 import argparse
 import sys
@@ -99,6 +104,36 @@ def cmd_simulate(a):
     print(f'Try: python mnemo.py habits --simulated --now "{end:%Y-%m-%d} 22:30"')
 
 
+def cmd_log(a):
+    from modules.storage import EventStore
+    from modules.vlm_logger import ActionLogger, VLMDescriber
+    source = int(a.source) if a.source.isdigit() else a.source
+    print(f"Loading {a.model} ...")
+    logger = ActionLogger(VLMDescriber(a.model), EventStore(a.db))
+    rows, stats = logger.run(source, start_time=_dt(a.start), max_seconds=a.max_seconds)
+    print(f"\n{stats['rows']} log rows stored in {a.db}")
+    print(f"{stats['video_seconds']}s of video, model time {stats['model_seconds']}s "
+          f"→ real-time factor {stats['real_time_factor']} (below 1.0 = faster than real time)")
+
+
+def cmd_qa(a):
+    from modules.storage import EventStore
+    from query.llm_qa import answer
+    llm = None
+    if a.llm:
+        from modules.vlm_logger import VLMDescriber
+        llm = VLMDescriber(a.model)
+    r = answer(" ".join(a.question), EventStore(a.db), llm=llm, now=_dt(a.now))
+    print(r["answer"])
+
+
+def cmd_activities(a):
+    from modules.storage import EventStore
+    from query.llm_qa import fmt_row
+    for r in EventStore(a.db).activities()[-a.limit:]:
+        print(f"{r['ts_start']:%Y-%m-%d} " + fmt_row(r))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Mnemo personal memory assistant")
     ap.add_argument("--db", default=C.DB_PATH)
@@ -140,6 +175,25 @@ def main(argv=None):
     s.add_argument("--end", help="last simulated day (default today)")
     s.add_argument("--no-miss", action="store_true", help="don't skip the last evening's pills")
     s.set_defaults(fn=cmd_simulate)
+
+    lg = sub.add_parser("log", help="STAGE 1: video → action log with a vision-language model (GPU)")
+    lg.add_argument("source")
+    lg.add_argument("--start", help='real start time of the recording, e.g. "2026-10-17 08:30"')
+    lg.add_argument("--model", default=C.VLM_MODEL)
+    lg.add_argument("--max-seconds", type=float, default=None, help="only the first N seconds")
+    lg.set_defaults(fn=cmd_log)
+
+    qa = sub.add_parser("qa", help='STAGE 2: answer any question from the action log')
+    qa.add_argument("question", nargs="+")
+    qa.add_argument("--llm", action="store_true", help="answer with the language model (GPU); "
+                                                       "without it, matching log rows are listed")
+    qa.add_argument("--model", default=C.VLM_MODEL)
+    qa.add_argument("--now")
+    qa.set_defaults(fn=cmd_qa)
+
+    ac = sub.add_parser("activities", help="list the action log")
+    ac.add_argument("--limit", type=int, default=100)
+    ac.set_defaults(fn=cmd_activities)
 
     a = ap.parse_args(argv)
     a.fn(a)
