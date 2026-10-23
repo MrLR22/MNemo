@@ -1,178 +1,247 @@
-# Mnemo: In-Home Personal Memory Assistant
+<div align="center">
 
-A chest-worn camera watches for one thing: **your own hand picking up or putting down** your
-tracked objects (keys, wallet, phone, pill bottle). On a put-down it works out which household
-landmark the object was left at, stores a short **text** note (object, place, time) and discards
-the video. Later you ask *"where is my wallet?"*. A habit engine learns routines (e.g. pills at
-~9 PM) and warns when one is missed. It's built for people with short-term memory difficulties.
+# Mnemo
 
-## Architecture
+**A wearable memory assistant that remembers what you *did*, not what you saw.**
 
-```
-video / camera ─► M1 frames (10 fps, 640 px, RAM-only 12 s buffer)
-                   │
-                   ▼
-              M2 perception: MediaPipe hands (own hands only) + YOLOv8n (your 4 objects)
-                   │          + camera-motion estimate (sparse optical flow)
-                   ▼
-              shared 105-d feature vector per frame (modules/features.py)
-                   │
-       ┌───────────┴────────────┐
-       ▼                        ▼
- M3a RuleEngine            M3b HOI-TCN model (causal temporal CNN, 240K params)
- IDLE→HOLDING→IDLE         per-frame P(none / pickup / putdown) → peak picking
-       └───────────┬────────────┘
-                   ▼  pickup / putdown event + the frame showing where the object rests
-              M5 landmark: CLIP ViT-B/32 embedding → kNN vs home-tour index → name or "unknown"
-                   ▼
-              M6 SQLite (text only) ─► M7 "where is X?"  ─► M8 habits + missed-routine alerts
-```
-M4 builds the landmark index offline from short enrollment clips. M9 (privacy) is enforced by
-tests that fail if the runtime ever writes an image or video.
+[![License: MIT](https://img.shields.io/badge/license-MIT-2a78d6.svg)](LICENSE)
+![Python 3.14](https://img.shields.io/badge/python-3.14-2a78d6.svg)
+![GPU: one T4](https://img.shields.io/badge/GPU-one%2016%20GB%20T4-52514e.svg)
+![Stores: text only](https://img.shields.io/badge/stores-text%20only%2C%20no%20video-52514e.svg)
 
-| Module | File |
+</div>
+
+People with short-term memory problems often cannot tell whether they closed the fridge, switched off the
+stove or took their medicine. Mnemo watches through a chest-worn camera and writes down what the wearer
+**did** as short, time-stamped lines of text. It never stores a frame. Later it answers questions from that
+record alone:
+
+> **"When did I open the oven?"** → *"You opened the oven at 09:00:00–09:00:04 and again at 09:37:50–09:37:54, both in the kitchen."*
+> **"Did I take my medicine?"** → *"I didn't see that in my records."*
+
+In our paper (in preparation), the method is called **ENGRAM** (*Egocentric Neural Grounded Retrieval of
+Actions and Moments*), and the text record is called the **reference diary**.
+
+<p align="center"><img src="docs/figures/fig_arch.png" alt="Mnemo architecture: an always-on small model decides which 4-second windows a large vision-language model describes" width="100%"></p>
+
+## How it works
+
+Mnemo uses two models. A small one runs all the time, and a large one runs only when needed.
+
+1. **Always on (cheap, CPU).** For every frame, MediaPipe Hands, YOLOv8n and sparse optical flow produce a
+   105-dimensional hand, object and camera-motion feature. **HOI-TCN**, our causal temporal CNN with 0.24 M
+   parameters, scores each 4-second window for hand–object interaction.
+2. **On demand (expensive, GPU).** Only the windows it selects, plus one window every 20 s as a heartbeat, go to
+   **Qwen3-VL-4B**. The model writes short structured lines instead of free captions:
+   ```
+   PLACE: kitchen counter
+   STATE: fridge = open
+   DID: put | milk | fridge
+   ```
+3. **Object-state memory.** When an object's reported state changes, Mnemo writes the matching action, e.g.
+   *closes fridge*. The VLM rarely says "closed" on its own, so Mnemo asks it again about objects it believes
+   are still open. Objects left open produce alerts such as *"the fridge was last seen open at 9:22"*.
+4. **Reference diary.** One SQLite table, text only. A 2.4-hour morning takes 636 rows in 240 kB.
+5. **Grounded answers.** The question is matched against the diary, and the same model answers **only from
+   the matching rows**, with times and places. If the rows don't answer it, Mnemo declines.
+
+The blue boxes in the figure are this project's contributions. The pre-trained models are used as
+components.
+
+## Results
+
+**Test setup:**
+- 20 random one-minute EPIC-KITCHENS-100 clips, 307 annotated actions (69 of them opening, closing or
+  switching).
+- The clips come from 5 people HOI-TCN never saw in training.
+- Qwen3-VL-4B ran on one Kaggle T4.
+- Scoring is strict: a diary row counts only if it has the exact EPIC verb and noun class within ±2 s.
+
+| What was measured | Result |
 |---|---|
-| M0 types / config | `modules/types.py`, `config.py` |
-| M1 frame source + RAM buffer | `modules/video_source.py` |
-| M2 perception | `modules/hand_detector.py`, `modules/object_detector.py`, `modules/ego_motion.py`, `modules/perception.py` |
-| M3 interaction engine | `modules/interaction.py` (rules + model decoding), `modules/features.py` |
-| Deep model | `model/architecture.py` (HOI-TCN), `model/data.py`, `model/extract_features.py`, `model/train.py`, `model/evaluate.py` |
-| M4/M5 landmarks | `modules/landmarks.py` |
-| M6 store | `modules/storage.py` |
-| M7 query | `query/query_engine.py` |
-| M8 habits | `modules/habits.py` |
-| M9 privacy | `tests/test_privacy_and_pipeline.py` |
-| M10 evaluation | `evaluation/evaluate_pipeline.py`, `model/evaluate.py`, `model/metrics.py` |
-| Tools | `tools/label_events.py` (label your videos), `detect/train_yolo.py` (fine-tune YOLO), `colab/train_on_colab.py` |
-| Old prototype | `legacy/` (reference only) |
+| HOI-TCN pick-up / put-down events, held-out people (±1 s) | F1 0.529 (precision 0.45, recall 0.65) |
+| Trigger vs. evenly spaced calls, same budget (74% of windows) | **86 vs. 75** actions kept (gain +11, 95% CI +2 to +20) |
+| VLM time per second of video | 1.64 s → **1.22 s** |
+| Object-state memory: open / close / on / off actions found | **17 → 30** of 69 |
+| Questions about a whole 2.4-hour morning | **76%** correct vs. 66% for the VLM shown the whole morning |
+| Invented events (questions about things that never happened) | **0 of 14** vs. 1 of 14 |
+| "When did I …?" answered with the right clock time | **15 of 24** (the direct VLM cannot tell time) |
 
-### Why the deep model looks like this
-Telling a pick-up from a put-down depends on **how the hand and object move over 1–3 seconds**,
-not on what the room looks like. So HOI-TCN reads hand landmarks, the object's position relative
-to the hand, and motion with camera movement subtracted, rather than CLIP scene features. That
-avoids the "kitchen ⇒ take" shortcut. Its causal convolutions only look at the past, so the same
-network runs live frame by frame (tested: streaming output equals full-sequence output).
-It is pre-trained on EPIC-KITCHENS-100 `take`/`put` actions, then fine-tuned on your chest-camera
-footage. Object identity comes from the fine-tuned YOLO, not from the model.
+<p align="center">
+  <img src="docs/figures/fig_trigger.png" alt="Actions found vs share of VLM calls" width="49%">
+  <img src="docs/figures/fig_states.png" alt="Effect of the object-state memory" width="49%">
+</p>
+<p align="center">
+  <img src="docs/figures/fig_timespan.png" alt="Question accuracy over one minute vs a whole morning" width="62%">
+</p>
 
-## Setup
+**Where Mnemo does not win.** These results are reported too:
+- **One-minute clips.** Asking the VLM directly is better here (88% vs. 76%). Thirty-two frames cover a
+  minute well, and the diary misses actions it never recorded. The diary pays off over long periods.
+- **Tight budgets.** Below about 60% of calls, evenly spaced calls find as many actions as the trigger or a
+  few more (both confidence intervals include zero). The threshold τ = 0.6 was chosen at the knee of this
+  curve on the same clips, so the benchmark reports every threshold.
+- **"Any action" trigger.** A head trained on the busiest EPIC minutes did not beat the pick-up / put-down
+  trigger (`model/train_interaction.py`, kept as a negative result).
+
+<details>
+<summary><b>Example: part of a morning's diary and answers generated from it</b></summary>
+
+```
+09:22:46  opens fridge                  (kitchen)
+09:22:46  picks up milk bottle          (kitchen)
+09:22:46  closes fridge                 (kitchen)
+09:23:02  puts down box of cornflakes   (kitchen counter)
+09:23:14  pours coffee                  (into cup)
+
+Q: When did I open the oven?
+A: You opened the oven at 09:00:00–09:00:04 and again at 09:37:50–09:37:54, both in the kitchen.
+
+Q: Did I take my medicine?
+A: I didn't see that in my records.
+```
+The coffee being poured is recorded, but the cup being picked up is not. That is a typical miss.
+</details>
+
+## Quick start
+
+### Install
 ```bash
-python -m venv .mnemovenv && source .mnemovenv/bin/activate   # fish: source .mnemovenv/bin/activate.fish
+git clone https://github.com/slikhithreddy22/MNemo.git
+cd MNemo
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
-python -m pytest            # 33 tests, ~1-2 min
+python -m pytest            # 87 tests on synthetic data, about a minute on a laptop CPU
 ```
+Tested on Linux with Python 3.14. The trained trigger ships in the repo (`models/hoi_tcn.pt`, 1 MB). The
+MediaPipe hand model and YOLOv8n download automatically the first time they are used.
 
-## Stage 1 + Stage 2: any action, any object (vision-language model, GPU)
-```
-STAGE 1  video ──(every 4 s, 8 frames)──► Qwen3-VL-4B ──► action log (text only):
-         09:14:02 | closes | fridge door | kitchen
-STAGE 2  question ──► matching log lines ──► same model answers ONLY from them (with times),
-         or "I didn't see that in my records."
-```
-- Colab (T4): `colab/mnemo_vlm.ipynb` loads the model once, logs a video, prints the
-  **real-time factor** (below 1.0 = keeps up with live video) and answers questions.
-- Command line: `python mnemo.py log VIDEO`, `python mnemo.py qa "did I close the fridge?" [--llm]`,
-  `python mnemo.py activities`. Without `--llm` (no GPU) `qa` lists the matching log rows.
-- Model: `VLM_MODEL` in `config.py` (Qwen3-VL-4B fits a 16 GB T4; 2B is faster).
-- **Object-state memory** (`VLM_TRACK_STATES`): the VLM also reports fridge/door/drawer/tap/stove/light
-  open-closed / on-off; a change between windows becomes a row (`closes | fridge`), marked `[state]`.
-- **Interaction trigger** (`modules/hoi_gate.py`, `python mnemo.py log VIDEO --trigger`): HOI-TCN scores
-  each 4-s window; the VLM only runs where the hands interact (threshold `GATE_THRESHOLD`, plus one
-  window every `GATE_HEARTBEAT_S`).
-- **Kaggle (T4): `colab/mnemo_kaggle.ipynb`** runs everything: demo on one clip, then the benchmark
-  (`evaluation/benchmark.py`) on random EPIC minutes of the 5 test people:
-  - stage 1 log vs. EPIC ground truth (`evaluation/log_accuracy.py`, EPIC's own verb/noun classes)
-  - auto-generated yes/no questions incl. a no-memory "ask the VLM directly" baseline
-    (`evaluation/qa_benchmark.py`)
-  - optionally Experiment A
-- Results so far (8 random test minutes, 153 true actions, Qwen3-VL-4B on a T4, prompt v2):
-  - Trigger: at the same number of VLM calls, it finds as many or more actions than every-N-th
-    window (41% of calls: 24 vs 17 actions).
-  - Real-time factor 1.35 every window → 1.03 at threshold 0.6.
-  - Stage 2 hallucinates 2-4% vs 10% for asking the VLM directly, but the direct VLM wins on
-    1-minute clips (80% vs 64% yes-recall). That is why Experiment C (`evaluation/long_qa.py`)
-    tests a whole morning.
-- v3 (`VLM_PROMPT_VERSION`):
-  - state lines first
-  - stop at repeated lines: 27% of v2 rows were repeats, using 32% of VLM time
-  - state check: the VLM said "closed" only once in 120 windows, so open/on objects are asked about again
-- Negative result: an "any action" head (`model/train_interaction.py`) trained on the busiest EPIC
-  minutes (69% action frames) did not beat the pick/put trigger. Idle time is missing from that data.
-
-## Training without personal data (pick/put model)
-| Part | How it works | Data |
-|---|---|---|
-| Hands | MediaPipe (pre-trained) | none |
-| Pick-up / put-down | **HOI-TCN, trained on Colab** | Charades-Ego (homes, 70 people), EPIC-KITCHENS-100, Ego4D FHO (when the licence arrives) |
-| Which object | YOLO-World open-vocabulary detector (`OBJECT_BACKEND="auto"`) | none (just the names) |
-| Which place | CLIP zero-shot generic places (`PLACE_PROMPTS`), with "unknown" rejection options | none |
-
-1. `python -m tools.make_colab_zip`, then upload `mnemo_code.zip` to `My Drive/mnemo/`
-2. Open `colab/mnemo_train.ipynb` in Colab (T4 GPU) and run the cells top to bottom
-3. Copy `My Drive/mnemo/models/hoi_tcn_public.pt` to `models/hoi_tcn.pt`, then
-   run `python mnemo.py run video.mp4 --mode model`
-
-The train/val/test split is by **person** (EPIC participant, Charades subject, Ego4D source video),
-so test numbers are always on people the model never saw.
-
-## Step-by-step plan with your own footage (optional, improves accuracy)
-1. **Mount the phone on your chest**, camera facing slightly down so both hands and the table
-   in front of you are in view. Use the same mount every time.
-2. **Object photos → fine-tune YOLO.** About 150 photos per object, taken from the chest camera:
-   on tables, in hand, partly covered by fingers, different rooms and lighting. Label them in
-   Roboflow/CVAT with the class names `keys, wallet, phone, pill_bottle`, export as YOLOv8, then:
-   `python -m detect.train_yolo --data <export>/data.yaml` (or on Colab). Until you do this,
-   only `phone` (and a rough `bottle → pill_bottle`) can be detected, because COCO has no keys/wallet class.
-3. **Enroll landmarks.** For each place (5–8: `entryway_table`, `desk`, `kitchen_counter`, ...),
-   record 2–3 short clips (5–10 s, different angles and lighting) into `data/enroll/<name>/`.
-   Then run `python mnemo.py enroll --check`. The check prints leave-one-out accuracy and
-   similarity percentiles; use them to set `LANDMARK_MIN_SIM` in `config.py`.
-4. **Record real footage**: 30–40 minutes of normal activity, 150+ pick-ups/put-downs in total,
-   spread over several sessions/days. Put the videos in `data/own/videos/`. Keep 2–3 videos aside
-   as a **test set** that is never used for training or tuning.
-5. **Label events**: `python -m tools.label_events data/own/videos/<file>.mp4`
-   (1–4 choose the object, `p` = pick-up, `d` = put-down). Optionally fill in the `landmark`
-   column of `data/own/labels.csv` for the test videos.
-6. **Baseline first (no training):** `python mnemo.py run data/own/videos/<file>.mp4 --show`.
-   Tune the `TUNE` values in `config.py` on the training videos only.
-7. **Deep model:** EPIC-KITCHENS pre-training on Colab (`colab/train_on_colab.py`), then
-   `python -m model.extract_features own` → fine-tune with `python -m model.train ... --init`.
-8. **Evaluate on the test videos:**
-   `python -m evaluation.evaluate_pipeline --videos ... --labels ... --mode rules` and `--mode model`,
-   plus `python -m model.evaluate` (with modality ablation). Report: rules vs model.
-9. **Habit demo:** `python mnemo.py simulate --days 14` then
-   `python mnemo.py habits --simulated --now "<today> 22:30"`. Label it as **simulated** in the report.
-
-## Everyday use
+### Video → diary → answers (GPU)
 ```bash
-python mnemo.py run recording.mp4 --start "2026-10-15 08:30"     # or: run 0 --show (live camera)
+pip install "transformers>=4.57" accelerate
+python mnemo.py log kitchen.mp4 --start "2026-10-17 08:30" --trigger    # HOI-TCN decides when the VLM looks
+python mnemo.py activities                                              # print the diary
+python mnemo.py qa "did I close the fridge?" --llm                      # grounded answer, with times
+```
+- Qwen3-VL-4B needs a 16 GB GPU such as a T4. To use a smaller model, set `VLM_MODEL` in `config.py` to
+  `Qwen/Qwen3-VL-2B-Instruct`, which is also faster.
+- Without `--llm`, `qa` lists the matching diary rows and needs no GPU.
+
+### No GPU? Run it on Kaggle
+Package the code with `python -m tools.make_colab_zip`, upload `mnemo_code.zip` as a Kaggle dataset, then
+open one of these notebooks with a T4:
+
+| Notebook | What it does |
+|---|---|
+| [`colab/mnemo_live_demo.ipynb`](colab/mnemo_live_demo.ipynb) | Any first-person video → diary → type your own questions |
+| [`colab/mnemo_kaggle.ipynb`](colab/mnemo_kaggle.ipynb) | The full benchmark above: trigger, state memory, QA and whole-morning test |
+| [`colab/mnemo_ego4d.ipynb`](colab/mnemo_ego4d.ipynb) | Ego4D Natural Language Queries test (needs an Ego4D licence) |
+| [`colab/mnemo_vlm.ipynb`](colab/mnemo_vlm.ipynb) | Stage 1 + stage 2 on Google Colab |
+| [`colab/mnemo_train.ipynb`](colab/mnemo_train.ipynb) | Train HOI-TCN on public datasets |
+
+### Pick-up / put-down mode (CPU only)
+The original mode needs no GPU. It tracks a few personal objects and remembers where each was put down:
+```bash
+python mnemo.py run recording.mp4 --mode model --show     # or: run 0 --show for a live camera
 python mnemo.py ask "where is my wallet?"
-python mnemo.py ask "did I take my pills today?"
-python mnemo.py habits
-python mnemo.py events
+python mnemo.py simulate --days 14                        # SIMULATED history for the habit demo
+python mnemo.py habits --simulated
+```
+For setting places, fine-tuning on your own objects and evaluating on your own videos, see
+[docs/own_footage.md](docs/own_footage.md).
+
+## Reproducing the results
+1. Run `colab/mnemo_kaggle.ipynb` on Kaggle. It writes `mnemo_results.zip`.
+2. Unzip it and draw the figures:
+   ```bash
+   python -m evaluation.make_figures --results <unzipped folder> --out docs/figures
+   ```
+
+How the data is split:
+- All splits are **by person**. HOI-TCN trained on 22 EPIC participants and validated on P04, P21, P22, P27
+  and P31. Early stopping and its decision threshold used the validation people.
+- Every result above comes from the test participants P02, P06, P08, P14 and P26.
+- The trigger threshold τ = 0.6 was read off the test curve. That is why every threshold is reported.
+
+| Piece | Code |
+|---|---|
+| Small model (HOI-TCN) | `model/architecture.py`, `model/train.py`, `model/evaluate.py` |
+| Trigger | `modules/hoi_gate.py` |
+| VLM describer + object-state memory | `modules/vlm_logger.py` |
+| Grounded answers / moment search | `query/llm_qa.py`, `query/locate.py` |
+| Benchmark (one VLM pass, replayed for every system) | `evaluation/benchmark.py`, `evaluation/log_accuracy.py`, `evaluation/qa_benchmark.py` |
+| Whole-morning test | `evaluation/long_qa.py` |
+| Ego4D NLQ test | `evaluation/ego4d_nlq.py`, `tools/fetch_ego4d.py` |
+
+## Repository layout
+```
+mnemo.py        command-line entry point: run, ask, log, qa, activities, habits, enroll, simulate
+config.py       every setting in one place (values marked TUNE are starting points)
+modules/        runtime: video source, perception (hands, objects, camera motion), features,
+                trigger (hoi_gate.py), stage 1 + state memory (vlm_logger.py), storage, habits
+model/          HOI-TCN: architecture, feature extraction, training, evaluation, metrics
+query/          stage 2: grounded answers, moment search, rule-based "where is X?"
+evaluation/     benchmark, diary accuracy, QA, whole-morning test, Ego4D NLQ, figures
+tools/          dataset fetchers (EPIC windows, Ego4D clips), labelling tool, demo video, code zip
+detect/         YOLOv8 fine-tuning for your own objects
+colab/          Kaggle and Colab notebooks
+tests/          pytest suite (synthetic data, no dataset downloads)
+docs/           figures, demo page template, own-footage guide
 ```
 
-## What has been verified and what hasn't
-Verified by tests in this repo:
-- the state machine on synthetic tracks: pick-up/put-down, brushes and nudges ignored,
-  walking (camera motion) not mistaken for a pick-up, keys hidden in the fist
-- causal, streaming HOI-TCN; the training pipeline reaches F1 ≥ 0.8 on a held-out synthetic task
-- habit engine: 0 errors on 400 random simulated histories
-- query answers, SQLite store, EPIC annotation parsing
-- privacy: the real pipeline runs with every image-writing function blocked
-- CPU speed (this laptop, 640 px): hands ~21 ms + YOLO ~53 ms + camera motion ~3 ms per frame,
-  CLIP ~180 ms only per event
+## Privacy
+- Frames are kept only in a RAM buffer, and only while their window is processed. Nothing visual is written
+  to disk. `tests/test_privacy_and_pipeline.py` runs the real pipeline with every image-writing function
+  blocked and checks that no image or video file appears.
+- The diary is plain text in a local SQLite file, and the whole system can run on one machine.
+- The text can still be sensitive. A real deployment needs encryption and user-controlled deletion.
 
-**Not yet measured (no real footage exists yet):** accuracy on real chest-camera video, the
-`TUNE` thresholds, the own-hand filter, landmark accuracy in your home, and whether EPIC
-pre-training helps. These are the experiments for the report. Do not quote numbers before
-running them.
+## Limitations
+- **Kitchens only, head-mounted cameras.** All numbers come from EPIC-KITCHENS-100, which was filmed with
+  head-mounted cameras. Mnemo is meant to be worn on the chest.
+- **Strict scoring.** Recall of 26–31% looks low because a row only counts with the exact EPIC verb and noun
+  ("mug" vs. "cup" is a miss). Read the numbers as comparisons between systems that share the same VLM outputs.
+- **Small morning test.** It joins separate clips rather than one continuous recording, and has 38 questions.
+- **Narrow trigger.** HOI-TCN was trained on pick-up and put-down only. Actions like stirring or wiping are
+  caught mainly by the 20-second heartbeat.
+- **Not a medical device.** There has been no user study. Mnemo is a research prototype.
 
-Known limits (state them in the report): a pill-bottle pick-up is a proxy for taking medicine;
-the privacy guarantee covers stored data, not someone inspecting the running machine's memory;
-COCO-only mode cannot see keys or wallets.
+## Roadmap
+- [ ] Ego4D Episodic Memory (NLQ) on held-out clips: the code is in place and the full run is pending
+- [ ] Hybrid keyword + vector search over the diary
+- [ ] Continuous chest-camera recordings
+- [ ] Mobile app and a user study
 
-### Machine-specific note
-On this laptop, importing MediaPipe pulls in `sounddevice`, and PortAudio's JACK/PipeWire
-start-up got the process SIGKILLed. `modules/hand_detector.py` stubs `sounddevice` out (Mnemo
-uses no audio).
+## Data, models and licences
+This repository contains **no videos and no dataset files**. Get each dataset from its owners under its
+licence.
+
+| Component | Licence | Used for |
+|---|---|---|
+| [EPIC-KITCHENS-100](https://epic-kitchens.github.io/) | CC BY-NC 4.0 | training HOI-TCN and all results above |
+| [Ego4D](https://ego4d-data.org/) | Ego4D licence agreement | NLQ test; clips must not be redistributed |
+| [MediaPipe Hand Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/hand_landmarker) | Apache-2.0 | hand landmarks (downloaded on first use) |
+| [Ultralytics YOLOv8 / YOLO-World](https://github.com/ultralytics/ultralytics) | AGPL-3.0 | object detection (downloaded on first use) |
+| [Qwen3-VL-4B-Instruct](https://huggingface.co/Qwen/Qwen3-VL-4B-Instruct) | Apache-2.0 | describing windows and answering questions |
+| [OpenCLIP](https://github.com/mlfoundations/open_clip) | MIT | place matching in the pick-up / put-down mode |
+
+- **Mnemo's own code** is released under the [MIT licence](LICENSE).
+- **The HOI-TCN weights** (`models/hoi_tcn.pt`) were trained on EPIC-KITCHENS-100 only. Treat them as
+  non-commercial too.
+- **Ultralytics is AGPL-3.0.** If you distribute a product that includes it, its terms apply to that
+  product.
+
+## Citation
+The paper citation will be added once it is published. Until then:
+```bibtex
+@software{mnemo2026,
+  title  = {Mnemo: a wearable memory assistant with an interaction-triggered reference diary},
+  author = {{The Mnemo authors}},
+  year   = {2026},
+  url    = {https://github.com/slikhithreddy22/MNemo}
+}
+```
+
+## Acknowledgements
+This project builds on the EPIC-KITCHENS-100 and Ego4D datasets, MediaPipe, Ultralytics, Qwen3-VL, OpenCLIP,
+PyTorch and Hugging Face Transformers. The experiments ran on Kaggle's free T4 GPUs.

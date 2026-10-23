@@ -2,8 +2,10 @@
 # M2: MediaPipe Hands (Tasks API) → list[Hand] with normalised landmarks.
 # Only the wearer's own hands are kept (see OWN_HAND_MIN_WRIST_Y in config).
 
+import os
 import sys
 import types
+import urllib.request
 
 # MediaPipe imports `sounddevice` for its audio tasks. On this machine PortAudio's JACK/PipeWire
 # start-up gets the whole process SIGKILLed (verified with gdb: kill comes from outside, 148 MB RSS).
@@ -17,16 +19,25 @@ import numpy as np
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision
 
-from config import HAND_MODEL, HAND_MIN_CONFIDENCE, FLIP_HANDEDNESS, OWN_HAND_MIN_WRIST_Y
+from config import HAND_MODEL, HAND_MODEL_URL, HAND_MIN_CONFIDENCE, FLIP_HANDEDNESS, OWN_HAND_MIN_WRIST_Y
 from modules.types import Hand
 
 _FLIP = {"Left": "Right", "Right": "Left"}
 
 
+def ensure_hand_model(path: str = HAND_MODEL) -> str:
+    """MediaPipe's hand landmarker (7.8 MB, Apache-2.0) is not in the repo: fetch it once."""
+    if not os.path.exists(path):
+        print(f"Downloading the MediaPipe hand model → {path}")
+        urllib.request.urlretrieve(HAND_MODEL_URL, path + ".part")
+        os.replace(path + ".part", path)
+    return path
+
+
 class HandDetector:
     def __init__(self, own_hands_only: bool = True):
         options = vision.HandLandmarkerOptions(
-            base_options=mp_python.BaseOptions(model_asset_path=HAND_MODEL),
+            base_options=mp_python.BaseOptions(model_asset_path=ensure_hand_model()),
             num_hands=2,
             min_hand_detection_confidence=HAND_MIN_CONFIDENCE,
             min_hand_presence_confidence=HAND_MIN_CONFIDENCE,

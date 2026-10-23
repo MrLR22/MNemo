@@ -12,7 +12,7 @@ import config as C
 
 ROOT = C.ROOT
 MEDIA_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".gif", ".mp4", ".avi", ".mov", ".mkv", ".npy"}
-SKIP_DIRS = {".git", ".mnemovenv", "legacy", "__pycache__", "data"}
+SKIP_DIRS = {".git", ".mnemovenv", "__pycache__", "data"}
 
 
 def media_files(root):

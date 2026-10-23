@@ -5,14 +5,14 @@
 #
 # Colab: upload mnemo_code.zip to Drive. Kaggle: upload it as (a new version of) the dataset used by
 # colab/mnemo_kaggle.ipynb.
-# Personal data, the virtualenv, git history and the old prototype are left out.
+# Personal data, the virtualenv and git history are left out.
 
 import os
 import zipfile
 
 import config as C
 
-SKIP_DIRS = {".mnemovenv", "data", "legacy", ".git", "outputs", "models", "runs", "__pycache__",
+SKIP_DIRS = {".mnemovenv", "data", ".git", "outputs", "models", "runs", "__pycache__",
              ".pytest_cache", "checkpoints", "evaluation_results", "screenshots", "weights",
              "mnemo_code", "results"}      # weights/: CLIP cache (re-downloaded); mnemo_code/: an unzipped old copy
 SKIP_FILES = {"yolov8s-worldv2.pt", "mnemo_code.zip"}       # YOLO-World downloads itself on Colab

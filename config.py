@@ -41,10 +41,12 @@ def set_objects(names: list[str]):
 
 
 # ── M2: PERCEPTION ──
-HAND_MODEL = _p("hand_landmarker.task")
+HAND_MODEL = _p("hand_landmarker.task")      # downloaded on first use (modules/hand_detector.py)
+HAND_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+                  "hand_landmarker/float16/1/hand_landmarker.task")
 OBJECT_BACKEND = "auto"       # "auto" | "finetuned" | "yoloworld" | "coco"  (see modules/object_detector.py)
 FINETUNED_YOLO = _p("models", "mnemo_objects.pt")   # produced by detect/train_yolo.py
-COCO_YOLO = _p("yolov8n.pt")
+COCO_YOLO = _p("yolov8n.pt")                       # downloaded automatically by ultralytics
 # YOLO-World: open-vocabulary detector, finds objects from text names, needs no training photos.
 YOLOWORLD_MODEL = "yolov8s-worldv2.pt"               # downloaded automatically by ultralytics
 YOLOWORLD_PROMPTS = {"keys": "keys", "wallet": "wallet", "phone": "mobile phone",

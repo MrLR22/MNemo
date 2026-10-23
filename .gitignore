@@ -1,19 +1,62 @@
+# ── Python ──
 __pycache__/
+*.py[cod]
+*.egg-info/
 .pytest_cache/
+.ipynb_checkpoints/
+.venv/
+venv/
 .mnemovenv/
-# personal data: your footage, labels, features, event database, landmark index
+
+# ── Editors / OS ──
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── Videos and images: never committed (personal footage; EPIC-KITCHENS and Ego4D licences) ──
+*.mp4
+*.MP4
+*.avi
+*.mov
+*.MOV
+*.mkv
+*.webm
+*.m4v
+*.jpg
+*.jpeg
+*.JPG
+
+# ── Data, results, databases ──
 data/
 outputs/
-models/
+results/
 runs/
 checkpoints/
 evaluation_results/
 screenshots/
-yolov8s-worldv2.pt
-mnemo_code.zip
+*.db
+*.sqlite
+*.npy
+*.npz
+*.zip
+
+# ── Model weights: downloaded on first use (MediaPipe, YOLO, CLIP, Qwen3-VL) ──
 weights/
-model/*.pt
-# never commit: personal project brief, unzipped copies of the Kaggle code zip, Kaggle results
+*.pt
+*.pth
+*.task
+*.onnx
+*.safetensors
+# ...except the trained HOI-TCN trigger (1 MB, trained on EPIC-KITCHENS-100 only)
+!models/
+models/*
+!models/hoi_tcn.pt
+
+# ── Never commit ──
 PROJECT CONTEXT BRIEF*.md
 mnemo_code/
-results/
+.env
+.aws/
+kaggle.json
