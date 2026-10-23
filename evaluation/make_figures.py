@@ -5,6 +5,8 @@
 #   fig_timespan.png   accuracy over 1 minute vs a whole morning: memory vs asking the model directly
 #
 #   python -m evaluation.make_figures --results data/kaggle_results/v3_final --out docs/figures
+#   python -m evaluation.make_figures --results data/kaggle_results/v3_final --out ../paper/figures --paper
+# --paper: vector PDFs without the in-image title / footnote (the paper's captions carry them).
 
 import argparse
 import json
@@ -20,6 +22,7 @@ from evaluation.qa_benchmark import score_answers
 
 INK, INK2, GRID, SURFACE = "#0b0b0b", "#52514e", "#e6e5e1", "#fcfcfb"
 OURS, BASE = "#2a78d6", "#eb6834"          # categorical slots 1 and 2 (validated, light mode)
+PAPER = False
 
 
 def _style(ax):
@@ -33,6 +36,8 @@ def _style(ax):
 
 
 def _title(fig, title, subtitle):
+    if PAPER:
+        return
     fig.text(0.04, 0.95, title, fontsize=12.5, fontweight="bold", color=INK, va="top")
     fig.text(0.04, 0.885, subtitle, fontsize=9.5, color=INK2, va="top")
 
@@ -80,7 +85,7 @@ def fig_trigger(results, out):
     _title(fig, f"The trigger keeps {x74[1]} of {pts[-1][1]} actions at {x74[0]:.0f}% of model calls",
            f"A fixed rate with the same calls keeps {x74[2]}. Below about 60% of calls the fixed rate wins.\n"
            "20 random EPIC-KITCHENS minutes, 5 people never seen in training, 307 annotated actions.")
-    fig.savefig(out, facecolor=SURFACE)
+    fig.savefig(out, facecolor=SURFACE, **({"bbox_inches": "tight", "pad_inches": 0.03} if PAPER else {}))
     plt.close(fig)
     return pts
 
@@ -114,7 +119,7 @@ def fig_states(results, out):
     gain = b["state_found"] / a["state_found"] - 1
     _title(fig, f"State memory finds {gain:.0%} more opens and closes ({a['state_found']} to {b['state_found']} of {a['state_true']})",
            "Same model answers, every window described; 20 random EPIC-KITCHENS minutes, 5 unseen people.")
-    fig.savefig(out, facecolor=SURFACE)
+    fig.savefig(out, facecolor=SURFACE, **({"bbox_inches": "tight", "pad_inches": 0.03} if PAPER else {}))
     plt.close(fig)
     return rows
 
@@ -147,12 +152,13 @@ def fig_timespan(results, long_qa, out):
     ax.set_xlim(-0.35, 1.35)
     ax.set_ylim(55, 95)
     ax.set_ylabel("Questions answered correctly (%)", fontsize=9.5, color=INK2)
-    fig.text(0.04, 0.045, f"Morning only: Mnemo gave the right clock time for {when_ok} of {len(when)} \"When did I...?\" questions "
-             f"(the direct model cannot tell time). Invented answers: Mnemo {long_m['no_answered_yes']} of {long_m['no_questions']}, "
-             f"direct {long_d['no_answered_yes']} of {long_d['no_questions']}.", fontsize=8.5, color=INK2, wrap=True)
+    if not PAPER:
+        fig.text(0.04, 0.045, f"Morning only: Mnemo gave the right clock time for {when_ok} of {len(when)} \"When did I...?\" questions "
+                 f"(the direct model cannot tell time). Invented answers: Mnemo {long_m['no_answered_yes']} of {long_m['no_questions']}, "
+                 f"direct {long_d['no_answered_yes']} of {long_d['no_questions']}.", fontsize=8.5, color=INK2, wrap=True)
     _title(fig, "Over a whole morning, memory beats asking the model directly",
            "Direct model: 32 frames of the clip or the whole morning. Mnemo: its log (trigger at 0.6 + state memory).")
-    fig.savefig(out, facecolor=SURFACE)
+    fig.savefig(out, facecolor=SURFACE, **({"bbox_inches": "tight", "pad_inches": 0.03} if PAPER else {}))
     plt.close(fig)
     return (short_m, short_d, long_m, long_d, when_ok, len(when))
 
@@ -161,13 +167,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--results", required=True, help="unzipped mnemo_results.zip")
     ap.add_argument("--out", default="docs/figures")
+    ap.add_argument("--paper", action="store_true", help="PDFs without titles, for the paper")
     args = ap.parse_args()
+    global PAPER
+    PAPER = args.paper
+    ext = "pdf" if PAPER else "png"
     os.makedirs(args.out, exist_ok=True)
     results = json.load(open(os.path.join(args.results, "benchmark.json")))
     long_qa = json.load(open(os.path.join(args.results, "long_qa.json")))
-    print("trigger points (calls %, ours, every-nth):", fig_trigger(results, os.path.join(args.out, "fig_trigger.png")))
-    print("states rows:", fig_states(results, os.path.join(args.out, "fig_states.png")))
-    s = fig_timespan(results, long_qa, os.path.join(args.out, "fig_timespan.png"))
+    print("trigger points (calls %, ours, every-nth):", fig_trigger(results, os.path.join(args.out, f"fig_trigger.{ext}")))
+    print("states rows:", fig_states(results, os.path.join(args.out, f"fig_states.{ext}")))
+    s = fig_timespan(results, long_qa, os.path.join(args.out, f"fig_timespan.{ext}"))
     print(f"timespan: 1 min mnemo {s[0]['accuracy']:.0%} direct {s[1]['accuracy']:.0%} | morning mnemo {s[2]['accuracy']:.0%} "
           f"direct {s[3]['accuracy']:.0%} | when {s[4]}/{s[5]}")
     print(f"saved to {args.out}")

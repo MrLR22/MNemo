@@ -107,6 +107,12 @@ ASK_VIDEO = """These {n} frames cover {sec:.0f} seconds of video from a camera w
 QUESTION: {question}
 Answer in one short sentence, starting with "Yes" or "No"."""
 
+ASK_TIME = """These {n} frames are spread evenly over {sec:.0f} seconds of video from a camera worn by the user \
+(first-person view). Hands in the lower part of the image are the user's own hands.
+
+QUESTION: {question}
+At what time in the video can the answer be seen? Reply with the number of seconds from the start only."""
+
 # ── object states ──
 # Canonical names, most specific first ("fridge door" is the fridge, not a door).
 _STATE_OBJECTS = [
@@ -358,6 +364,11 @@ class VLMDescriber:
         """Ask a question directly about the frames (the no-memory baseline in the QA benchmark)."""
         return self._video_call(frames_bgr, seconds,
                                 lambda n: ASK_VIDEO.format(n=n, sec=seconds, question=question), 60)
+
+    def ask_time(self, frames_bgr: list[np.ndarray], seconds: float, question: str) -> str:
+        """Ask WHEN the answer is visible (the no-memory baseline in the Ego4D NLQ test)."""
+        return self._video_call(frames_bgr, seconds,
+                                lambda n: ASK_TIME.format(n=n, sec=seconds, question=question), 20)
 
     def chat(self, prompt: str, max_new_tokens: int = 300) -> str:
         """Text-only question (used by stage 2 to answer from the log)."""
