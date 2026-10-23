@@ -111,7 +111,7 @@ git clone https://github.com/slikhithreddy22/MNemo.git
 cd MNemo
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
-python -m pytest            # 87 tests on synthetic data, about a minute on a laptop CPU
+python -m pytest            # 87 tests on synthetic data (the first run also downloads the hand and YOLO models)
 ```
 Tested on Linux with Python 3.14. The trained trigger ships in the repo (`models/hoi_tcn.pt`, 1 MB). The
 MediaPipe hand model and YOLOv8n download automatically the first time they are used.
