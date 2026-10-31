@@ -79,9 +79,18 @@ tv (on or off)."""
 _CHECK = """
 CHECK: the user may have left these open or on: {objects}. For EACH of them write a STATE line \
 (open/closed or on/off) as seen in the LAST frame, or "= not visible" if it is not in view."""
-PROMPT_LINES = _LINES_HEAD + _DID_LINE + _LINES_RULES + "\nDo not invent objects you cannot see."
-PROMPT_LINES_STATES = (_LINES_HEAD + "STATE: <object> = <open|closed|on|off>\n" + _DID_LINE + _LINES_STATE_RULES
-                       + _LINES_RULES + "\nDo not invent objects you cannot see.")
+# v5 (VLM_SEEN): + a SEEN line with the objects in view, as the LAST line. On Ego4D the diary named the
+# asked-about object for only 38% of questions, because objects the user only LOOKS at ("where is my bicycle?")
+# were never written down. Placed first (v4) it crowded out the STATE and DID lines; last, generation stops
+# right after it (loop_or_full).
+_SEEN_LINE = "SEEN: <objects in view, comma-separated>\n" if C.VLM_SEEN else ""
+_SEEN_RULES = ("\nSEEN line (always the last line): at most " + str(C.VLM_MAX_SEEN) + " other objects you can "
+               "clearly see (not people), the most noticeable first.") if C.VLM_SEEN else ""
+_PIPES = "\nWrite every DID line with the two | separators exactly as shown." if C.VLM_SEEN else ""
+PROMPT_LINES = (_LINES_HEAD + _DID_LINE + _SEEN_LINE + _LINES_RULES + _PIPES + _SEEN_RULES
+                + "\nDo not invent objects you cannot see.")
+PROMPT_LINES_STATES = (_LINES_HEAD + "STATE: <object> = <open|closed|on|off>\n" + _DID_LINE + _SEEN_LINE
+                       + _LINES_STATE_RULES + _LINES_RULES + _PIPES + _SEEN_RULES + "\nDo not invent objects you cannot see.")
 
 
 def build_prompt(n: int, sec: float, track_states: bool = True, check: list[str] | None = None) -> str:
@@ -91,15 +100,19 @@ def build_prompt(n: int, sec: float, track_states: bool = True, check: list[str]
         return PROMPT_LINES.format(n=n, sec=sec)
     p = PROMPT_LINES_STATES.format(n=n, sec=sec)
     if check:
-        p += _CHECK.format(objects=", ".join(check))
+        c = _CHECK.format(objects=", ".join(check))
+        # before the SEEN rule: generation stops after the SEEN line, so the check must be answered earlier
+        p = p.replace(_SEEN_RULES, c + _SEEN_RULES) if _SEEN_RULES else p + c
     return p
 
 
 def loop_or_full(text: str, max_actions: int = C.VLM_MAX_ACTIONS) -> bool:
-    """Stop generating? True once a complete DID line repeats an earlier one, or max_actions is reached."""
+    """Stop generating? True once a complete DID line repeats an earlier one, max_actions is reached, or the
+    (last) SEEN line is complete."""
     lines = [l.strip().lower() for l in text.split("\n")[:-1]]          # complete lines only
     did = [l for l in lines if l.startswith("did")]
-    return len(did) >= max_actions or len(did) != len(set(did))
+    seen_done = C.VLM_SEEN and any(l.startswith("seen") for l in lines)
+    return len(did) >= max_actions or len(did) != len(set(did)) or seen_done
 
 ASK_VIDEO = """These {n} frames cover {sec:.0f} seconds of video from a camera worn on the chest of the user \
 (first-person view). Hands in the lower part of the image are the user's own hands.
@@ -216,20 +229,55 @@ def _clean(x) -> str | None:
 _NONE = {"", "-", "->", "none", "n/a", "unknown", "null"}
 
 
+# Verbs of the fixed list (longest first, so "picks up" wins over "picks"), plus common extras the model uses.
+_KNOWN_VERBS = sorted({v.strip() for v in VERBS.split(",")} | {"takes out", "puts away", "puts in", "takes", "holds"},
+                      key=len, reverse=True)
+
+
+def _did_actions(body: str) -> list[dict]:
+    """One DID line → actions. The asked format is "verb | object | where", but the model often writes
+    "verb object -> where", sometimes several on one line separated by commas (58% of DID lines once a
+    SEEN line was added, 9% before)."""
+    if "|" in body:
+        parts = [x.strip().lower() for x in body.split("|")] + ["", ""]
+        parts[2] = parts[2].removeprefix("->").removesuffix("->").strip()   # "-> counter": the template's arrow
+        items = [parts[:3]]
+    else:
+        items = []
+        for seg in body.split(","):
+            seg = " ".join(seg.lower().split())
+            if not seg:
+                continue
+            verb = next((v for v in _KNOWN_VERBS if seg == v or seg.startswith(v + " ")), None)
+            if verb is None and items:            # "picks up plates, cups -> sink": a list inside the object
+                what, _, where = seg.partition("->")
+                items[-1][1] = ", ".join(x for x in (items[-1][1], what.strip()) if x)
+                items[-1][2] = where.strip() or items[-1][2]
+                continue
+            if verb is None and "->" not in seg:
+                continue
+            verb = verb or seg.split()[0]             # a verb outside the list ("holds phone -> table")
+            what, _, where = seg[len(verb):].partition("->")
+            items.append([verb, what.strip(), where.strip()])
+    return [{"verb": v, "object": None if o in _NONE else o, "where": None if w in _NONE else w}
+            for v, o, w in items if v not in _NONE]
+
+
 def _parse_lines(text: str, out: dict) -> dict:
     for line in text.splitlines():
-        m = re.match(r"\s*[-*]?\s*(PLACE|DID|STATE)\s*:\s*(.*)", line, re.I)
+        m = re.match(r"\s*[-*]?\s*(PLACE|SEEN|DID|STATE)\s*:\s*(.*)", line, re.I)
         if not m:
             continue
         kind, body = m.group(1).upper(), m.group(2).strip()
         if kind == "PLACE":
             out["place"] = None if body.lower() in _NONE else body
+        elif kind == "SEEN":
+            for x in re.split(r"[,;]", body):
+                x = x.strip().strip(".").lower()
+                if x not in _NONE and x not in out["seen"] and len(out["seen"]) < C.VLM_MAX_SEEN:
+                    out["seen"].append(x)
         elif kind == "DID":
-            parts = [x.strip().lower() for x in body.split("|")] + ["", ""]
-            parts[2] = parts[2].removeprefix("->").removesuffix("->").strip()   # "-> counter": the template's arrow
-            if parts[0] not in _NONE:
-                out["actions"].append({"verb": parts[0], "object": None if parts[1] in _NONE else parts[1],
-                                       "where": None if parts[2] in _NONE else parts[2]})
+            out["actions"] += _did_actions(body)
         else:
             sm = re.match(r"(.+?)\s*[=:]\s*([A-Za-z]+)\s*$", body)
             if sm:
@@ -250,15 +298,15 @@ def _dedupe(out: dict) -> dict:
 
 
 def parse_output(text: str) -> dict:
-    """Extract {"place", "actions": [{verb, object, where}], "states": [{object, state}], "raw"} from
+    """Extract {"place", "seen": [objects], "actions": [{verb, object, where}], "states": [{object, state}], "raw"} from
     model text: the line format or v1 JSON. Tolerates code fences, extra words and answers cut off
     mid-way; never raises."""
     return _dedupe(_parse_any(text))
 
 
 def _parse_any(text: str) -> dict:
-    out = {"place": None, "actions": [], "states": [], "raw": text.strip()}
-    if re.search(r"^\s*[-*]?\s*(PLACE|DID|STATE)\s*:", text, re.I | re.M):
+    out = {"place": None, "seen": [], "actions": [], "states": [], "raw": text.strip()}
+    if re.search(r"^\s*[-*]?\s*(PLACE|SEEN|DID|STATE)\s*:", text, re.I | re.M):
         return _parse_lines(text, out)
     m = re.search(r"\{.*\}", text, re.S)
     d = None
@@ -382,8 +430,11 @@ class ActionLogger:
     """Runs the describer over a video and writes activity rows to the store."""
 
     def __init__(self, describer, store=None, window_s: float = C.VLM_WINDOW_S, frames: int = C.VLM_FRAMES,
-                 track_states: bool = C.VLM_TRACK_STATES):
+                 track_states: bool = C.VLM_TRACK_STATES, embedder=None):
+        """embedder: optional modules.landmarks.ClipEmbedder; then every window, described or skipped, gets an
+        image fingerprint rec["fp"] (CLIP vector of its middle frame) for image search (query/locate.py)."""
         self.describer = describer
+        self.embedder = embedder
         self.store = store
         self.window_s = window_s
         self.frames = frames
@@ -426,6 +477,10 @@ class ActionLogger:
         seconds = window[-1].t - window[0].t + self.window_s / self.frames
         rec = {"k": k, "t": window[0].t, "ts": window[0].ts, "seconds": seconds, "text": None, "dt": 0.0,
                "called": True}
+        if self.embedder is not None:
+            t0 = time.time()
+            rec["fp"] = self.embedder.embed([window[len(window) // 2].image])[0]
+            rec["fp_dt"] = time.time() - t0
         if call is not None and k < len(call) and not call[k]:
             rec["called"] = False
             self.windows.append(rec)
@@ -464,7 +519,7 @@ def ingest(rec: dict, rows: list[dict], tracker: StateTracker | None, store=None
     new = []
     for a in actions or [{"verb": None, "object": None, "where": None, "source": "vlm"}]:
         row = {"ts_start": ts0, "ts_end": ts1, "verb": a["verb"], "object": a["object"],
-               "where": a["where"], "place": parsed["place"],
+               "where": a["where"], "place": parsed["place"], "seen": ", ".join(parsed["seen"]) or None,
                "raw": a.get("state_change") or parsed["raw"], "t": rec["t"], "t_end": rec["t"] + rec["seconds"],
                "source": a["source"]}
         # same action continuing from the previous window → extend it instead of a new row
@@ -472,14 +527,21 @@ def ingest(rec: dict, rows: list[dict], tracker: StateTracker | None, store=None
         if (prev and row["verb"] and prev["verb"] == row["verb"] and prev["object"] == row["object"]
                 and (row["ts_start"] - prev["ts_end"]).total_seconds() <= 1.0):
             prev["ts_end"], prev["t_end"] = ts1, row["t_end"]
+            prev["seen"] = _union(prev.get("seen"), row["seen"])
             if store is not None and "id" in prev:
-                store.extend_activity(prev["id"], ts1)
+                store.extend_activity(prev["id"], ts1, prev["seen"])
             continue
         if store is not None:
             row["id"] = store.add_activity(row, source=row["source"])
         rows.append(row)
         new.append(row)
     return new, parsed
+
+
+def _union(a: str | None, b: str | None) -> str | None:
+    """'cup, kettle' + 'kettle, tap' → 'cup, kettle, tap'."""
+    items = [x for x in (a or "").split(", ") + (b or "").split(", ") if x]
+    return ", ".join(dict.fromkeys(items)) or None
 
 
 def replay(windows: list[dict], call: np.ndarray | None = None, track_states: bool = True,

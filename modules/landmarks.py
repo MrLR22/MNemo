@@ -30,11 +30,12 @@ class ClipEmbedder:
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(
             C.CLIP_ARCH, pretrained=C.CLIP_PRETRAINED)
         self.tokenizer = open_clip.get_tokenizer(C.CLIP_ARCH)
-        self.model.eval()
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model.eval().to(self.device)
 
     def embed_text(self, texts: list[str]) -> np.ndarray:
         with self.torch.no_grad():
-            f = self.model.encode_text(self.tokenizer(texts))
+            f = self.model.encode_text(self.tokenizer(texts).to(self.device))
             f = f / f.norm(dim=-1, keepdim=True)
         return f.cpu().numpy().astype(np.float32)
 
@@ -49,7 +50,7 @@ class ClipEmbedder:
         batch = self.torch.stack([
             self.preprocess(Image.fromarray(cv2.cvtColor(im, cv2.COLOR_BGR2RGB))) for im in images_bgr])
         with self.torch.no_grad():
-            f = self.model.encode_image(batch)
+            f = self.model.encode_image(batch.to(self.device))
             f = f / f.norm(dim=-1, keepdim=True)
         return f.cpu().numpy().astype(np.float32)
 
