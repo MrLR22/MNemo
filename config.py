@@ -134,15 +134,24 @@ VLM_FRAME_W = 448             # frames are downscaled to this width before the m
 VLM_MAX_NEW_TOKENS = 300      # actions + object states; a cut-off answer is still parsed per item
 VLM_TRACK_STATES = True       # also ask for fridge/door/tap/stove/light state → derive opens/closes
 VLM_FORMAT = "lines"          # "lines" (v2: short lines, fixed verb list, ~half the tokens) | "json" (v1)
-VLM_PROMPT_VERSION = "lines-v3"   # names cached answers/results: json (v1), lines (v2), lines-v3 (states first,
-                                  # state check, loop stop)
+VLM_PROMPT_VERSION = "lines-v5"   # names cached answers/results: json (v1), lines (v2), lines-v3 (states first,
+                                  # state check, loop stop), lines-v4 (+ SEEN line after PLACE), lines-v5 (SEEN last)
+VLM_SEEN = True               # also list the objects in view (SEEN line), so "where is my X?" works without an action
+VLM_MAX_SEEN = 5              # at most this many SEEN objects per window. v4 put SEEN right after PLACE: the model
+                              # listed ~14 objects, wrote half as many STATE lines and dropped the "|" in DID lines
+                              # (VLM time 1.64 → 2.64 s per video second on EPIC); v5 puts it LAST and stops there
 VLM_MAX_ACTIONS = 8           # at most this many actions per window (stops repetition loops)
 STATE_CHECK_MAX_AGE_S = 600   # keep asking about an open/on object for up to 10 min after it was last seen
 QA_MAX_LOG_LINES = 60         # log lines given to the language model when answering
 
+# Diary search (query/locate.py): keyword + meaning (text embeddings) + image fingerprints (CLIP), fused by rank
+TEXT_EMBED_MODEL = "sentence-transformers/all-MiniLM-L6-v2"   # 22M parameters, Apache 2.0, runs on a CPU
+FUSION_K = 60                 # reciprocal rank fusion: score = sum over searches of 1 / (FUSION_K + rank)
+
 # Interaction trigger (modules/hoi_gate.py): HOI-TCN decides which windows reach the VLM.
-GATE_THRESHOLD = 0.6          # window score = max over the window of 1 - P(no pick/put). 0.6 = the knee of the
-                              # EPIC benchmark curve (8 test minutes): 69% of VLM calls, 93% of actions seen
+GATE_THRESHOLD = 0.6          # window score = max over the window of 1 - P(no pick/put). Chosen on 30 random
+                              # minutes of the VALIDATION people (evaluation/choose_threshold.py): +7 actions over
+                              # every-nth at 75% of calls
 GATE_HEARTBEAT_S = 20.0       # describe at least one window this often even when nothing happens
 GATE_HANGOVER = 0             # describe this many extra windows after a triggered one (did not help on EPIC)
 GATE_MOTION = None            # TUNE: hand-speed threshold (hoi_gate.window_motion); None = rule off

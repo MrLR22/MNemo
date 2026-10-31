@@ -7,6 +7,7 @@ ultralytics==8.4.175
 torch==2.14.1
 torchvision==0.29.1
 open_clip_torch==3.3.0
+sentence-transformers==5.1.1   # meaning search over the diary (query/locate.hybrid)
 pillow==12.3.0
 PyYAML==6.0.3
 pytest==9.1.1

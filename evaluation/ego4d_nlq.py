@@ -13,6 +13,9 @@
 #      R@1 at IoU 0.3 / 0.5. Each diary is scored with the model picking the line and with the best
 #      search match alone ("(search only)"). Baseline "direct": the VLM gets 32 frames of the whole clip
 #      and is asked for the time.
+#   4. SEARCH PARTS (prompt lines-v4): every diary is also searched with the SEEN objects, meaning search
+#      (text embeddings) and image search (CLIP fingerprints of every window), see query/locate.hybrid.
+#      The plain name ("mnemo@0.6") is the lines-v3 method: keyword search over the actions only.
 # Everything is also split by question type and by how well a diary of hand actions fits it (fit()).
 #
 #   from evaluation.ego4d_nlq import load_nlq, run_nlq
@@ -31,10 +34,11 @@ from evaluation.qa_benchmark import clip_frames
 from modules.hoi_gate import gate_decisions
 from modules.vlm_logger import ActionLogger, replay
 from query.llm_qa import norm_tokens
-from query.locate import diary_line, locate
+from query.locate import diary_line, hybrid, locate
 
 TOL_S, WIDE_S = 2.0, 10.0
 DIRECT = "direct VLM (no memory)"
+FULL = " +seen +meaning +image"           # suffix of the complete lines-v4 search
 GROUPS = ("good", "partial", "poor")
 
 
@@ -108,10 +112,10 @@ def judge(pred: tuple | None, q: dict) -> dict:
 
 
 def logged(rows: list[dict], q: dict) -> bool:
-    """A diary row near the asked-about moment that names the asked-about object."""
+    """A diary row near the asked-about moment that names the asked-about object (done or seen)."""
     want = norm_tokens(q["slot"] or q["q"])
     return any(r["verb"] and r["t"] <= q["t1"] + TOL_S and r["t_end"] >= q["t0"] - TOL_S
-               and want & norm_tokens(" ".join(str(r.get(f) or "") for f in ("verb", "object", "where")))
+               and want & norm_tokens(" ".join(str(r.get(f) or "") for f in ("verb", "object", "where", "seen")))
                for r in rows)
 
 
@@ -132,10 +136,32 @@ def _answers(questions, preds, rows=None):
     return out
 
 
+def search_variants(name: str, text=None, images=None) -> dict:
+    """{system name: (keep SEEN objects?, candidates function)}. The main system gets every part on its own,
+    the others only the plain (lines-v3) and the complete search."""
+    v = {name: (False, None)}
+    if C.VLM_SEEN:
+        v[f"{name} +seen"] = (True, None)
+    if name.startswith("mnemo"):
+        if text is not None:
+            v[f"{name} +seen +meaning"] = (True, hybrid(text=text))
+        if images is not None:
+            v[f"{name} +seen +image"] = (True, hybrid(images=images))
+        if text is not None and images is not None:
+            v[f"{name} +meaning +image"] = (False, hybrid(text=text, images=images))   # what SEEN adds on top
+    if text is not None and images is not None:
+        v[name + FULL] = (True, hybrid(text=text, images=images))
+    if not name.startswith("mnemo"):
+        v = {k: x for k, x in v.items() if k in (name, name + FULL)}
+    return v
+
+
 def run_clip(video: str, clip: dict, describer, gate, cache_dir: str, direct: bool = True,
-             verbose: bool = True) -> dict:
+             verbose: bool = True, embedder=None, text=None) -> dict:
+    """embedder: ClipEmbedder (image fingerprints of every window); text: TextEmbedder (meaning search)."""
     uid, qs = clip["clip_uid"], clip["questions"]
     cache = os.path.join(cache_dir, f"{uid}__{C.VLM_PROMPT_VERSION}.json")
+    fp_cache = os.path.join(cache_dir, f"{uid}__fingerprints.npy")
     if os.path.exists(cache):
         with open(cache) as f:
             c = json.load(f)
@@ -144,29 +170,35 @@ def run_clip(video: str, clip: dict, describer, gate, cache_dir: str, direct: bo
     else:
         sig, gstats = gate.signals(video)
         scores = sig["hoi"]
-        logger = ActionLogger(describer, store=None, track_states=True)
+        logger = ActionLogger(describer, store=None, track_states=True, embedder=embedder)
         _, stats = logger.run(video, start_time=START, verbose=verbose, scores=scores)
         windows = logger.windows
+        if embedder is not None:
+            np.save(fp_cache, np.stack([w.pop("fp") for w in windows]).astype(np.float16))
+            stats["fingerprint_seconds"] = round(sum(w.pop("fp_dt") for w in windows), 2)
         with open(cache, "w") as f:
             json.dump({"windows": _windows_to_json(windows), "stats": stats, "scores": scores.tolist(),
                        "gate": gstats}, f)
+    images = (np.load(fp_cache), embedder) if embedder is not None and os.path.exists(fp_cache) else None
     n = len(windows)
     main = f"mnemo@{C.GATE_THRESHOLD}"
     call = _pad(gate_decisions(scores, C.GATE_THRESHOLD, hangover=0), n)
     systems = {"every window": None, main: call, f"every-nth = {main}": _evenly(n, int(call.sum()))}
     res = {"clip": uid, "video_uid": clip["video_uid"], "seconds": stats["video_seconds"], "questions": qs,
-           "trigger": trigger_coverage(scores, qs, n), "systems": {}}
+           "trigger": trigger_coverage(scores, qs, n), "stats": stats, "systems": {}}
     for name, c in systems.items():
-        rows = replay(windows, c, track_states=True)
+        all_rows = replay(windows, c, track_states=True)
         calls = n if c is None else int(c.sum())
-        for sname, llm in ((name, describer), (f"{name} (search only)", None)):
-            preds = []
-            for q in qs:
-                p = locate(q["q"], rows, llm)
-                preds.append((p["t0"], p["t1"]) if p else None)
-            res["systems"][sname] = {"calls": calls, "windows": n, "answers": _answers(qs, preds, rows)}
+        for vname, (seen, cand) in search_variants(name, text, images).items():
+            rows = all_rows if seen else [dict(r, seen=None) for r in all_rows]
+            for sname, llm in ((vname, describer), (f"{vname} (search only)", None)):
+                preds = []
+                for q in qs:
+                    p = locate(q["q"], rows, llm, candidates=cand)
+                    preds.append((p["t0"], p["t1"]) if p else None)
+                res["systems"][sname] = {"calls": calls, "windows": n, "answers": _answers(qs, preds, rows)}
         if name == main:
-            res["log"] = [diary_line(r) for r in rows if r["verb"]]
+            res["log"] = [diary_line(r) for r in all_rows if r["verb"] or r.get("seen")]
     if direct:
         frames, sec = clip_frames(video, 32)
         preds = []
@@ -176,9 +208,11 @@ def run_clip(video: str, clip: dict, describer, gate, cache_dir: str, direct: bo
             preds.append((max(0.0, t - w), t + w) if t is not None else None)
         res["systems"][DIRECT] = {"calls": None, "windows": n, "answers": _answers(qs, preds)}
     if verbose:
-        a = res["systems"][main]["answers"]
-        print(f"  {main}: VLM on {systems[main].sum()}/{n} windows | {len(a)} questions | "
-              f"diary has the moment {sum(x['logged'] for x in a)} | hit ±2 s {sum(x['hit2'] for x in a)}")
+        for s in (main, main + FULL):
+            if s in res["systems"]:
+                a = res["systems"][s]["answers"]
+                print(f"  {s}: VLM on {systems[main].sum()}/{n} windows | {len(a)} questions | "
+                      f"diary has the moment {sum(x['logged'] for x in a)} | hit ±2 s {sum(x['hit2'] for x in a)}")
     return res
 
 
@@ -201,9 +235,24 @@ def _pct(a, b):
     return f"{a}/{b} ({a / b:.0%})" if b else "-"
 
 
+def paired(full: list[dict], a: str, b: str, key: str = "hit2", n: int = 10000, seed: int = 0) -> dict:
+    """System a minus system b over the same questions; 95% range by resampling clips."""
+    per = [(sum(x[key] for x in r["systems"][a]["answers"]), sum(x[key] for x in r["systems"][b]["answers"]))
+           for r in full]
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(len(per), size=(n, len(per)))
+    d = np.array([p - q for p, q in per])
+    sums = np.sort(d[idx].sum(axis=1))
+    return {"a": sum(p for p, _ in per), "b": sum(q for _, q in per), "diff": int(d.sum()),
+            "low": int(sums[int(0.025 * n)]), "high": int(sums[int(0.975 * n) - 1]),
+            "better": int((d > 0).sum()), "worse": int((d < 0).sum()), "clips": len(per)}
+
+
 def summarize(results: list[dict]) -> str:
     main = f"mnemo@{C.GATE_THRESHOLD}"
     full = [r for r in results if "systems" in r]
+    if full and main + FULL in full[0]["systems"]:
+        main_base, main = main, main + FULL            # tables 3-4 show the complete search
     hours = sum(r["seconds"] for r in results) / 3600
     md = [f"# Experiment D: Ego4D NLQ (validation split)\n",
           f"{len(results)} clips from {len({r['video_uid'] for r in results})} different videos, {hours:.1f} h; "
@@ -250,11 +299,30 @@ def summarize(results: list[dict]) -> str:
         for t, a in sorted(by_t.items(), key=lambda kv: -len(kv[1])):
             md.append(f"| {t} | {fit(t)} | {len(a)} | {_pct(sum(x['logged'] for x in a), len(a))} | "
                       f"{_pct(sum(x['hit2'] for x in a), len(a))} | {_pct(sum(x['iou'] >= 0.3 for x in a), len(a))} |")
+
+        names = full[0]["systems"]
+        base = main_base if main != f"mnemo@{C.GATE_THRESHOLD}" else main
+        pairs = [(s, base) for s in names if s.startswith(base + " +") and "(search only)" not in s]
+        pairs += [(main, f"every-nth = {base}{FULL}"), (main, f"every window{FULL}"), (main, DIRECT)]
+        pairs = [(a, b) for a, b in pairs if a in names and b in names]
+        if pairs:
+            md += ["\n## 5. What each part adds (hit ±2 s, same questions; 95% range from resampling clips)\n",
+                   "| System | vs | Right moments | Difference [95% range] | Clips better / equal / worse |",
+                   "|---|---|---|---|---|"]
+            for a, b in pairs:
+                p = paired(full, a, b)
+                md.append(f"| {a} | {b} | {p['a']} vs {p['b']} | {p['diff']:+d} [{p['low']:+d}, {p['high']:+d}] | "
+                          f"{p['better']} / {p['clips'] - p['better'] - p['worse']} / {p['worse']} |")
+            fp = [r["stats"].get("fingerprint_seconds") for r in full if r.get("stats")]
+            fp = [x for x in fp if x is not None]
+            if fp:
+                md.append(f"\nImage fingerprints (CLIP on every window): {sum(fp) / sum(r['seconds'] for r in full):.3f} "
+                          "s per video second.")
     return "\n".join(md) + "\n"
 
 
 def run_nlq(clips: list[dict], nlq: dict, describer, gate, out_dir: str, trigger_only: list[dict] = (),
-            direct: bool = True) -> tuple[list[dict], str]:
+            direct: bool = True, embedder=None, text=None) -> tuple[list[dict], str]:
     """clips / trigger_only: [{"clip_uid", "path"}]. Writes ego4d_nlq.json + ego4d_nlq.md to out_dir."""
     cache_dir = os.path.join(out_dir, "vlm_cache")
     os.makedirs(cache_dir, exist_ok=True)
@@ -267,7 +335,7 @@ def run_nlq(clips: list[dict], nlq: dict, describer, gate, out_dir: str, trigger
     for i, c in enumerate(clips, 1):
         clip = nlq[c["clip_uid"]]
         print(f"\n[{i}/{len(clips)}] {c['clip_uid']} ({clip['seconds'] / 60:.1f} min, {len(clip['questions'])} questions)")
-        res = run_clip(c["path"], clip, describer, gate, cache_dir, direct=direct)
+        res = run_clip(c["path"], clip, describer, gate, cache_dir, direct=direct, embedder=embedder, text=text)
         results.append(res)
         save()
     for i, c in enumerate(trigger_only, 1):

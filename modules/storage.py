@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS activities (
     object      TEXT,
     place       TEXT,
     where_      TEXT,                   -- where the object is / ended up
+    seen        TEXT,                   -- objects in view, comma-separated (prompt lines-v4)
     raw         TEXT,                   -- the model's full answer, for checking
     source      TEXT
 );
@@ -44,6 +45,9 @@ class EventStore:
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(activities)")}
+        if "seen" not in cols:                       # diaries written before the SEEN line
+            self.conn.execute("ALTER TABLE activities ADD COLUMN seen TEXT")
 
     def add(self, ev: Event, source: str = "") -> int:
         cur = self.conn.execute(
@@ -85,16 +89,17 @@ class EventStore:
     # ── activities (stage 1 log) ──
     def add_activity(self, row: dict, source: str = "") -> int:
         cur = self.conn.execute(
-            "INSERT INTO activities (ts_start, ts_end, verb, object, place, where_, raw, source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO activities (ts_start, ts_end, verb, object, place, where_, seen, raw, source) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (row["ts_start"].isoformat(timespec="seconds"), row["ts_end"].isoformat(timespec="seconds"),
-             row.get("verb"), row.get("object"), row.get("place"), row.get("where"), row.get("raw"), source))
+             row.get("verb"), row.get("object"), row.get("place"), row.get("where"), row.get("seen"),
+             row.get("raw"), source))
         self.conn.commit()
         return cur.lastrowid
 
-    def extend_activity(self, activity_id: int, ts_end: datetime):
-        self.conn.execute("UPDATE activities SET ts_end = ? WHERE id = ?",
-                          (ts_end.isoformat(timespec="seconds"), activity_id))
+    def extend_activity(self, activity_id: int, ts_end: datetime, seen: str | None = None):
+        self.conn.execute("UPDATE activities SET ts_end = ?, seen = COALESCE(?, seen) WHERE id = ?",
+                          (ts_end.isoformat(timespec="seconds"), seen, activity_id))
         self.conn.commit()
 
     def activities(self, start: datetime | None = None, end: datetime | None = None) -> list[dict]:
