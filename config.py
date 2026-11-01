@@ -134,12 +134,14 @@ VLM_FRAME_W = 448             # frames are downscaled to this width before the m
 VLM_MAX_NEW_TOKENS = 300      # actions + object states; a cut-off answer is still parsed per item
 VLM_TRACK_STATES = True       # also ask for fridge/door/tap/stove/light state → derive opens/closes
 VLM_FORMAT = "lines"          # "lines" (v2: short lines, fixed verb list, ~half the tokens) | "json" (v1)
-VLM_PROMPT_VERSION = "lines-v5"   # names cached answers/results: json (v1), lines (v2), lines-v3 (states first,
-                                  # state check, loop stop), lines-v4 (+ SEEN line after PLACE), lines-v5 (SEEN last)
-VLM_SEEN = True               # also list the objects in view (SEEN line), so "where is my X?" works without an action
-VLM_MAX_SEEN = 5              # at most this many SEEN objects per window. v4 put SEEN right after PLACE: the model
-                              # listed ~14 objects, wrote half as many STATE lines and dropped the "|" in DID lines
-                              # (VLM time 1.64 → 2.64 s per video second on EPIC); v5 puts it LAST and stops there
+VLM_PROMPT_VERSION = "lines-v3"   # names cached answers/results: json (v1), lines (v2), lines-v3 (states first,
+                                  # state check, loop stop), lines-v4 / lines-v5 (+ SEEN line, rejected: see VLM_SEEN)
+VLM_SEEN = False              # SEEN line (objects in view). Tested and REJECTED: first (v4) or last (v5), the model
+                              # wrote half as many STATE lines (2.26 → ~1.0 per window, so state memory stopped
+                              # working) and fewer actions, and took 10.2-10.5 s per window instead of 6.6 s.
+                              # Image search (CLIP fingerprints) finds seen-but-not-done objects instead.
+                              # True only to reproduce the lines-v5 runs (then set VLM_PROMPT_VERSION = "lines-v5").
+VLM_MAX_SEEN = 5              # at most this many SEEN objects per window
 VLM_MAX_ACTIONS = 8           # at most this many actions per window (stops repetition loops)
 STATE_CHECK_MAX_AGE_S = 600   # keep asking about an open/on object for up to 10 min after it was last seen
 QA_MAX_LOG_LINES = 60         # log lines given to the language model when answering
