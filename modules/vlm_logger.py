@@ -79,30 +79,39 @@ tv (on or off)."""
 _CHECK = """
 CHECK: the user may have left these open or on: {objects}. For EACH of them write a STATE line \
 (open/closed or on/off) as seen in the LAST frame, or "= not visible" if it is not in view."""
-# v5 (VLM_SEEN): + a SEEN line with the objects in view, as the LAST line. On Ego4D the diary named the
-# asked-about object for only 38% of questions, because objects the user only LOOKS at ("where is my bicycle?")
-# were never written down. Placed first (v4) it crowded out the STATE and DID lines; last, generation stops
-# right after it (loop_or_full).
-_SEEN_LINE = "SEEN: <objects in view, comma-separated>\n" if C.VLM_SEEN else ""
+# SEEN line (VLM_SEEN, prompts lines-v4/v5, rejected): the objects in view, as the LAST line, generation stops
+# right after it (loop_or_full). On Ego4D the diary named the asked-about object for only 38% of questions, because
+# objects the user only LOOKS at were never written down; but with a SEEN line the model wrote half as many STATE
+# lines and became 55% slower, so image search covers seen objects instead.
+_SEEN_LINE = "SEEN: <objects in view, comma-separated>\n"
 _SEEN_RULES = ("\nSEEN line (always the last line): at most " + str(C.VLM_MAX_SEEN) + " other objects you can "
-               "clearly see (not people), the most noticeable first.") if C.VLM_SEEN else ""
-_PIPES = "\nWrite every DID line with the two | separators exactly as shown." if C.VLM_SEEN else ""
-PROMPT_LINES = (_LINES_HEAD + _DID_LINE + _SEEN_LINE + _LINES_RULES + _PIPES + _SEEN_RULES
-                + "\nDo not invent objects you cannot see.")
-PROMPT_LINES_STATES = (_LINES_HEAD + "STATE: <object> = <open|closed|on|off>\n" + _DID_LINE + _SEEN_LINE
-                       + _LINES_STATE_RULES + _LINES_RULES + _PIPES + _SEEN_RULES + "\nDo not invent objects you cannot see.")
+               "clearly see (not people), the most noticeable first.")
+_PIPES = "\nWrite every DID line with the two | separators exactly as shown."
+
+
+def lines_prompts(seen: bool = C.VLM_SEEN) -> tuple[str, str]:
+    """(actions only, actions + states) prompt templates; seen=False gives exactly the lines-v3 prompts."""
+    sl, sr, pp = (_SEEN_LINE, _SEEN_RULES, _PIPES) if seen else ("", "", "")
+    actions = _LINES_HEAD + _DID_LINE + sl + _LINES_RULES + pp + sr + "\nDo not invent objects you cannot see."
+    states = (_LINES_HEAD + "STATE: <object> = <open|closed|on|off>\n" + _DID_LINE + sl + _LINES_STATE_RULES
+              + _LINES_RULES + pp + sr + "\nDo not invent objects you cannot see.")
+    return actions, states
+
+
+PROMPT_LINES, PROMPT_LINES_STATES = lines_prompts()
 
 
 def build_prompt(n: int, sec: float, track_states: bool = True, check: list[str] | None = None) -> str:
     if C.VLM_FORMAT != "lines":
         return (PROMPT_STATES if track_states else PROMPT).format(n=n, sec=sec)
+    actions, states = lines_prompts(C.VLM_SEEN)
     if not track_states:
-        return PROMPT_LINES.format(n=n, sec=sec)
-    p = PROMPT_LINES_STATES.format(n=n, sec=sec)
+        return actions.format(n=n, sec=sec)
+    p = states.format(n=n, sec=sec)
     if check:
         c = _CHECK.format(objects=", ".join(check))
         # before the SEEN rule: generation stops after the SEEN line, so the check must be answered earlier
-        p = p.replace(_SEEN_RULES, c + _SEEN_RULES) if _SEEN_RULES else p + c
+        p = p.replace(_SEEN_RULES, c + _SEEN_RULES) if C.VLM_SEEN else p + c
     return p
 
 

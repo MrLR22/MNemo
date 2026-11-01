@@ -13,9 +13,9 @@
 #      R@1 at IoU 0.3 / 0.5. Each diary is scored with the model picking the line and with the best
 #      search match alone ("(search only)"). Baseline "direct": the VLM gets 32 frames of the whole clip
 #      and is asked for the time.
-#   4. SEARCH PARTS (prompt lines-v4): every diary is also searched with the SEEN objects, meaning search
-#      (text embeddings) and image search (CLIP fingerprints of every window), see query/locate.hybrid.
-#      The plain name ("mnemo@0.6") is the lines-v3 method: keyword search over the actions only.
+#   4. SEARCH PARTS: every diary is also searched with meaning search (text embeddings) and image search
+#      (CLIP fingerprints of every window), see query/locate.hybrid, and with the SEEN objects when the prompt
+#      has a SEEN line (config.VLM_SEEN). The plain name ("mnemo@0.6") is keyword search over the actions only.
 # Everything is also split by question type and by how well a diary of hand actions fits it (fit()).
 #
 #   from evaluation.ego4d_nlq import load_nlq, run_nlq
@@ -38,7 +38,11 @@ from query.locate import diary_line, hybrid, locate
 
 TOL_S, WIDE_S = 2.0, 10.0
 DIRECT = "direct VLM (no memory)"
-FULL = " +seen +meaning +image"           # suffix of the complete lines-v4 search
+
+
+def full_suffix() -> str:
+    """Name suffix of the complete search: meaning + image (+ SEEN objects when the prompt has a SEEN line)."""
+    return (" +seen" if C.VLM_SEEN else "") + " +meaning +image"
 GROUPS = ("good", "partial", "poor")
 
 
@@ -137,22 +141,23 @@ def _answers(questions, preds, rows=None):
 
 
 def search_variants(name: str, text=None, images=None) -> dict:
-    """{system name: (keep SEEN objects?, candidates function)}. The main system gets every part on its own,
-    the others only the plain (lines-v3) and the complete search."""
+    """{system name: (keep SEEN objects?, candidates function)}. The plain name is the lines-v3 search (keyword over
+    the actions). The main system gets every part on its own, the others only the plain and the complete search."""
+    seen, tag, full = C.VLM_SEEN, (" +seen" if C.VLM_SEEN else ""), full_suffix()
     v = {name: (False, None)}
-    if C.VLM_SEEN:
-        v[f"{name} +seen"] = (True, None)
+    if seen:
+        v[name + tag] = (True, None)
     if name.startswith("mnemo"):
         if text is not None:
-            v[f"{name} +seen +meaning"] = (True, hybrid(text=text))
+            v[f"{name}{tag} +meaning"] = (seen, hybrid(text=text))
         if images is not None:
-            v[f"{name} +seen +image"] = (True, hybrid(images=images))
-        if text is not None and images is not None:
+            v[f"{name}{tag} +image"] = (seen, hybrid(images=images))
+        if seen and text is not None and images is not None:
             v[f"{name} +meaning +image"] = (False, hybrid(text=text, images=images))   # what SEEN adds on top
     if text is not None and images is not None:
-        v[name + FULL] = (True, hybrid(text=text, images=images))
+        v[name + full] = (seen, hybrid(text=text, images=images))
     if not name.startswith("mnemo"):
-        v = {k: x for k, x in v.items() if k in (name, name + FULL)}
+        v = {k: x for k, x in v.items() if k in (name, name + full)}
     return v
 
 
@@ -208,7 +213,7 @@ def run_clip(video: str, clip: dict, describer, gate, cache_dir: str, direct: bo
             preds.append((max(0.0, t - w), t + w) if t is not None else None)
         res["systems"][DIRECT] = {"calls": None, "windows": n, "answers": _answers(qs, preds)}
     if verbose:
-        for s in (main, main + FULL):
+        for s in (main, main + full_suffix()):
             if s in res["systems"]:
                 a = res["systems"][s]["answers"]
                 print(f"  {s}: VLM on {systems[main].sum()}/{n} windows | {len(a)} questions | "
@@ -251,6 +256,7 @@ def paired(full: list[dict], a: str, b: str, key: str = "hit2", n: int = 10000, 
 def summarize(results: list[dict]) -> str:
     main = f"mnemo@{C.GATE_THRESHOLD}"
     full = [r for r in results if "systems" in r]
+    FULL = full_suffix()
     if full and main + FULL in full[0]["systems"]:
         main_base, main = main, main + FULL            # tables 3-4 show the complete search
     hours = sum(r["seconds"] for r in results) / 3600

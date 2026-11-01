@@ -1,12 +1,14 @@
-# The SEEN line (prompt lines-v4), its storage, and the hybrid diary search (keyword + meaning + image).
-# The text and image models are replaced by tiny fake embedders.
+# The SEEN line (prompts lines-v4/v5, switched off in config: it crowded out the STATE lines), its storage, and the
+# hybrid diary search (keyword + meaning + image). The text and image models are replaced by tiny fake embedders.
 
 import sqlite3
 from datetime import datetime, timedelta
 
 import numpy as np
+import pytest
 
-from evaluation.ego4d_nlq import FULL, load_nlq, run_nlq
+import config as C
+from evaluation.ego4d_nlq import full_suffix, load_nlq, run_nlq
 from modules.storage import EventStore
 from modules.vlm_logger import build_prompt, loop_or_full, parse_output, replay
 from query.locate import diary_line, hybrid, locate
@@ -33,7 +35,18 @@ def test_did_lines_without_separators():
     assert acts("DID: picks up | cup | ->") == [("picks up", "cup", None)]
 
 
-def test_seen_is_last_and_stops_generation():
+@pytest.fixture
+def seen_on(monkeypatch):
+    monkeypatch.setattr(C, "VLM_SEEN", True)
+
+
+def test_seen_off_is_the_v3_prompt():
+    p = build_prompt(8, 4.0, True, ["fridge"])
+    assert "SEEN" not in p and p.endswith('or "= not visible" if it is not in view.')
+    assert not loop_or_full("PLACE: kitchen\nSEEN: cup\n")
+
+
+def test_seen_is_last_and_stops_generation(seen_on):
     p = build_prompt(8, 4.0, True, ["fridge"])
     lines = p.splitlines()
     assert lines.index("SEEN: <objects in view, comma-separated>") > lines.index("DID: <verb> | <object> | <where the object is or ends up, or ->")
@@ -112,7 +125,7 @@ class FakeEmbedder(FakeClip):
         return np.array([[im.mean() / 255.0, 0.5] for im in images])
 
 
-def test_run_nlq_with_all_search_parts(tmp_path):
+def _run(tmp_path):
     p = _nlq(tmp_path / "nlq.json", [("v1", "c1", 24, [("Where did I put the drill?", PUT, "drill", 9.0, 10.0),
                                                        ("Where is the bicycle?", "Objects: Where is object X?", "bicycle", 1.0, 2.0)])])
     vid = _video(str(tmp_path / "c1.avi"))
@@ -120,7 +133,20 @@ def test_run_nlq_with_all_search_parts(tmp_path):
               ["PLACE: garage"] * 4
     res, md = run_nlq([{"clip_uid": "c1", "path": vid}], load_nlq(p), Scripted(answers), Gate(), str(tmp_path / "out"),
                       embedder=FakeEmbedder(), text=FakeText())
-    s = res[0]["systems"]
+    return res[0]["systems"], md
+
+
+def test_run_nlq_without_seen(tmp_path):
+    s, md = _run(tmp_path)
+    assert set(s) >= {"mnemo@0.6", "mnemo@0.6 +meaning", "mnemo@0.6 +image", "mnemo@0.6 +meaning +image",
+                      "every window +meaning +image", "every-nth = mnemo@0.6 +meaning +image"}
+    assert not any("seen" in k for k in s)
+    assert "Hit ±2 s (mnemo@0.6 +meaning +image)" in md and "## 5. What each part adds" in md
+
+
+def test_run_nlq_with_all_search_parts(tmp_path, seen_on):
+    s, md = _run(tmp_path)
+    FULL = full_suffix()
     assert {"mnemo@0.6", "mnemo@0.6 +seen", "mnemo@0.6 +seen +meaning", "mnemo@0.6 +seen +image", "mnemo@0.6 +meaning +image", "mnemo@0.6" + FULL,
             "every window", "every window" + FULL, "every-nth = mnemo@0.6" + FULL} <= set(s)
     assert "every window +seen" not in s
