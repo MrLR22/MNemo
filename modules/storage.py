@@ -1,9 +1,14 @@
 # modules/storage.py
-# M6: SQLite event store. Text only: no images, no embeddings of the user's day.
+# M6: SQLite event store = the reference diary. No video and no images are stored. Besides the text diary it can
+# keep two kinds of vectors for search (search/): a CLIP image fingerprint per 4-s window (512 numbers, about 1 kB)
+# and a meaning vector per distinct diary line. Fingerprints are derived from the camera images, so they are
+# private data like the diary itself: never sent anywhere, deleted with the diary.
 
 import os
 import sqlite3
 from datetime import datetime
+
+import numpy as np
 
 import config as C
 from modules.types import Event
@@ -35,7 +40,31 @@ CREATE TABLE IF NOT EXISTS activities (
     source      TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_activities_ts ON activities(ts_start);
+
+-- search vectors (search/engine.py): float16, unit length
+CREATE TABLE IF NOT EXISTS fingerprints (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_start    TEXT NOT NULL,
+    ts_end      TEXT NOT NULL,
+    model       TEXT NOT NULL,          -- e.g. "ViT-B-32/openai": vectors of different models never mix
+    vec         BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fingerprints_ts ON fingerprints(ts_start);
+CREATE TABLE IF NOT EXISTS text_vectors (
+    text        TEXT NOT NULL,          -- the diary line without its time (search.rank.diary_text)
+    model       TEXT NOT NULL,
+    vec         BLOB NOT NULL,
+    PRIMARY KEY (text, model)
+);
 """
+
+
+def _blob(v) -> bytes:
+    return np.asarray(v, np.float16).tobytes()
+
+
+def _vec(b: bytes) -> np.ndarray:
+    return np.frombuffer(b, np.float16).astype(np.float32)
 
 
 class EventStore:
@@ -119,7 +148,46 @@ class EventStore:
         return rows
 
     def clear_activities(self):
-        self.conn.execute("DELETE FROM activities")
+        """Delete the diary and its search vectors."""
+        for table in ("activities", "fingerprints", "text_vectors"):
+            self.conn.execute(f"DELETE FROM {table}")
+        self.conn.commit()
+
+    # ── search vectors ──
+
+    def add_fingerprint(self, ts_start: datetime, ts_end: datetime, vec, model: str):
+        self.conn.execute("INSERT INTO fingerprints (ts_start, ts_end, model, vec) VALUES (?, ?, ?, ?)",
+                          (ts_start.isoformat(timespec="milliseconds"), ts_end.isoformat(timespec="milliseconds"),
+                           model, _blob(vec)))
+        self.conn.commit()
+
+    def fingerprints(self, model: str, start: datetime | None = None, end: datetime | None = None
+                     ) -> tuple[list[datetime], list[datetime], np.ndarray]:
+        """(window starts, window ends, [n, d] vectors) of one model, in time order."""
+        q, args = "SELECT ts_start, ts_end, vec FROM fingerprints WHERE model = ?", [model]
+        if start:
+            q += " AND ts_end > ?"                     # a window ending exactly at start is outside the range
+            args.append(start.isoformat(timespec="milliseconds"))
+        if end:
+            q += " AND ts_start < ?"
+            args.append(end.isoformat(timespec="milliseconds"))
+        rows = self.conn.execute(q + " ORDER BY ts_start", args).fetchall()
+        if not rows:
+            return [], [], np.zeros((0, 0), np.float32)
+        return ([datetime.fromisoformat(r[0]) for r in rows], [datetime.fromisoformat(r[1]) for r in rows],
+                np.stack([_vec(r[2]) for r in rows]))
+
+    def text_vectors(self, texts: list[str], model: str) -> dict[str, np.ndarray]:
+        out = {}
+        for i in range(0, len(texts), 500):                     # SQLite limits the number of ? per query
+            part = texts[i:i + 500]
+            q = f"SELECT text, vec FROM text_vectors WHERE model = ? AND text IN ({','.join('?' * len(part))})"
+            out.update({t: _vec(v) for t, v in self.conn.execute(q, [model, *part])})
+        return out
+
+    def add_text_vectors(self, vecs: dict[str, np.ndarray], model: str):
+        self.conn.executemany("INSERT OR REPLACE INTO text_vectors (text, model, vec) VALUES (?, ?, ?)",
+                              [(t, model, _blob(v)) for t, v in vecs.items()])
         self.conn.commit()
 
     def objects(self) -> list[str]:

@@ -12,6 +12,7 @@ import config as C
 class TextEmbedder:
     def __init__(self, model_id: str = C.TEXT_EMBED_MODEL, device: str | None = None):
         from sentence_transformers import SentenceTransformer
+        self.model_id = model_id
         self.model = SentenceTransformer(model_id, device=device)
         self.cache: dict[str, np.ndarray] = {}
 

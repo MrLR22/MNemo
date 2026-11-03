@@ -11,7 +11,7 @@
 #
 # Stage 1 / stage 2 (vision-language model; needs a GPU such as the Colab T4):
 #   python mnemo.py log VIDEO [--start ...]          video → action log (any action, any object)
-#   python mnemo.py qa "did I close the fridge?" [--llm]   answer from the action log
+#   python mnemo.py qa "did I close the fridge?" [--llm] [--search keyword|hybrid]   answer from the action log
 #   python mnemo.py activities                       list the action log
 
 import argparse
@@ -117,7 +117,11 @@ def cmd_log(a):
         call = gate_decisions(scores, a.threshold)
         print(f"trigger: VLM on {call.sum()}/{len(call)} windows ({g['gate_seconds']}s for hands/objects/HOI-TCN)")
     print(f"Loading {a.model} ...")
-    logger = ActionLogger(VLMDescriber(a.model), EventStore(a.db))
+    embedder = None
+    if not a.no_fingerprints:                          # image fingerprints for search/ (no image is stored)
+        from modules.landmarks import ClipEmbedder
+        embedder = ClipEmbedder()
+    logger = ActionLogger(VLMDescriber(a.model), EventStore(a.db), embedder=embedder)
     rows, stats = logger.run(source, start_time=_dt(a.start), max_seconds=a.max_seconds, call=call, scores=scores)
     print(f"\n{stats['rows']} log rows stored in {a.db}")
     print(f"{stats['video_seconds']}s of video, VLM on {stats['vlm_calls']}/{stats['windows']} windows, "
@@ -132,8 +136,23 @@ def cmd_qa(a):
     if a.llm:
         from modules.vlm_logger import VLMDescriber
         llm = VLMDescriber(a.model)
-    r = answer(" ".join(a.question), EventStore(a.db), llm=llm, now=_dt(a.now))
+    store, q = EventStore(a.db), " ".join(a.question)
+    searcher = None
+    if a.search == "hybrid":
+        from modules.landmarks import ClipEmbedder
+        from modules.text_embed import TextEmbedder
+        from search.engine import Searcher
+        searcher = Searcher(store, text=TextEmbedder(), clip=ClipEmbedder())
+    r = answer(q, store, llm=llm, now=_dt(a.now), searcher=searcher)
     print(r["answer"])
+    if searcher is not None:
+        from query.llm_qa import time_range
+        start, end, _ = time_range(q, _dt(a.now) or datetime.now())
+        m = searcher.moment(q, start, end, llm=llm)
+        if m:
+            what = "not described; the camera image matches" if m["row"].get("image_only") else \
+                " ".join(x for x in (m["row"]["verb"], m["row"]["object"]) if x)
+            print(f"best moment: {m['ts_start']:%H:%M:%S}-{m['ts_end']:%H:%M:%S} | {what}")
 
 
 def cmd_activities(a):
@@ -193,6 +212,7 @@ def main(argv=None):
     lg.add_argument("--trigger", action="store_true", help="only describe windows where HOI-TCN sees hand interaction")
     lg.add_argument("--threshold", type=float, default=C.GATE_THRESHOLD)
     lg.add_argument("--checkpoint", default=C.MODEL_CHECKPOINT)
+    lg.add_argument("--no-fingerprints", action="store_true", help="do not store image fingerprints (image search off)")
     lg.set_defaults(fn=cmd_log)
 
     qa = sub.add_parser("qa", help='STAGE 2: answer any question from the action log')
@@ -201,6 +221,8 @@ def main(argv=None):
                                                        "without it, matching log rows are listed")
     qa.add_argument("--model", default=C.VLM_MODEL)
     qa.add_argument("--now")
+    qa.add_argument("--search", choices=["keyword", "hybrid"], default="hybrid",
+                    help="hybrid = keyword + meaning + image search (search/); keyword = the old word match")
     qa.set_defaults(fn=cmd_qa)
 
     ac = sub.add_parser("activities", help="list the action log")

@@ -110,8 +110,10 @@ Answer in 1-3 short sentences using ONLY the log. Say the time (and the place, i
 If the log does not answer the question, say exactly: "I didn't see that in my records." Do not guess."""
 
 
-def answer(question: str, store, llm=None, now: datetime | None = None) -> dict:
-    """llm: object with .chat(prompt) (VLMDescriber) or None for the no-LLM fallback."""
+def answer(question: str, store, llm=None, now: datetime | None = None, searcher=None) -> dict:
+    """llm: object with .chat(prompt) (VLMDescriber) or None for the no-LLM fallback.
+    searcher: search.engine.Searcher → the language model gets the rows of the keyword + meaning + image search
+    instead of the keyword matches. Only diary rows (diary_only): an image match alone never makes a yes."""
     now = now or datetime.now()
     start, end, period = time_range(question, now)
     rows = store.activities(start, end)
@@ -133,6 +135,8 @@ def answer(question: str, store, llm=None, now: datetime | None = None) -> dict:
         return {"answer": text, "lines": top, "mode": "search"}
 
     # with a language model: matching rows if any, otherwise the most recent part of the period
+    if searcher is not None:
+        hits = searcher.search(question, start, end, k=C.QA_MAX_LOG_LINES, diary_only=True)
     context = hits if hits else rows[-C.QA_MAX_LOG_LINES:]
     context = sorted(context, key=lambda r: r["ts_start"])
     prompt = PROMPT.format(period=period, log="\n".join(fmt_row(r) for r in context), question=question)
