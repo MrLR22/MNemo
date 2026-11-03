@@ -30,6 +30,7 @@ class ClipEmbedder:
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(
             C.CLIP_ARCH, pretrained=C.CLIP_PRETRAINED)
         self.tokenizer = open_clip.get_tokenizer(C.CLIP_ARCH)
+        self.model_id = f"{C.CLIP_ARCH}/{C.CLIP_PRETRAINED}"     # names stored fingerprints
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model.eval().to(self.device)
 

@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-2a78d6.svg)](LICENSE)
 ![Python 3.14](https://img.shields.io/badge/python-3.14-2a78d6.svg)
 ![GPU: one T4](https://img.shields.io/badge/GPU-one%2016%20GB%20T4-52514e.svg)
-![Stores: text only](https://img.shields.io/badge/stores-text%20only%2C%20no%20video-52514e.svg)
+![Stores: no video](https://img.shields.io/badge/stores-text%20%2B%20vectors%2C%20no%20video-52514e.svg)
 
 </div>
 
@@ -41,9 +41,18 @@ Mnemo uses two models. A small one runs all the time, and a large one runs only 
 3. **Object-state memory.** When an object's reported state changes, Mnemo writes the matching action, e.g.
    *closes fridge*. The VLM rarely says "closed" on its own, so Mnemo asks it again about objects it believes
    are still open. Objects left open produce alerts such as *"the fridge was last seen open at 9:22"*.
-4. **Reference diary.** One SQLite table, text only. A 2.4-hour morning takes 636 rows in 240 kB.
-5. **Grounded answers.** The question is matched against the diary, and the same model answers **only from
-   the matching rows**, with times and places. If the rows don't answer it, Mnemo declines.
+4. **Reference diary.** One SQLite file, no video and no images: the text diary (a 2.4-hour morning takes 636
+   rows in 240 kB) plus small search vectors, a CLIP image fingerprint per 4-second window (about 1 kB, also for
+   windows the trigger skipped) and a meaning vector per distinct diary line. The fingerprints come from the
+   camera images, so they are private data like the diary.
+5. **Search** (`search/`, its own part). Three searches over the diary, combined by rank: keyword (rare words
+   count more), meaning (text embeddings: *cooker* finds *stove*) and image (fingerprints: finds things that were
+   seen but never written down). On 20 Ego4D clips (diary written with a test prompt that also listed the
+   objects in view) the three together found the asked-about moment for 68 questions, against 40 with keyword
+   search alone; the test with the final prompt is `colab/mnemo_ego4d_search.ipynb`.
+6. **Grounded answers.** The same model answers **only from the diary lines the search found**, with times and
+   places. If they don't answer it, Mnemo declines. An image match can point to a moment, but never counts as
+   proof that you did something.
 
 The blue boxes in the figure are this project's contributions. The pre-trained models are used as
 components.
@@ -168,7 +177,9 @@ How the data is split:
 | Small model (HOI-TCN) | `model/architecture.py`, `model/train.py`, `model/evaluate.py` |
 | Trigger | `modules/hoi_gate.py` |
 | VLM describer + object-state memory | `modules/vlm_logger.py` |
-| Grounded answers / moment search | `query/llm_qa.py`, `query/locate.py` |
+| Search (keyword + meaning + image) | `search/rank.py`, `search/engine.py`, `modules/text_embed.py` |
+| Grounded answers / which moment | `query/llm_qa.py`, `query/locate.py` |
+| Search-only benchmark (laptop, no GPU) | `evaluation/search_bench.py` |
 | Benchmark (one VLM pass, replayed for every system) | `evaluation/benchmark.py`, `evaluation/log_accuracy.py`, `evaluation/qa_benchmark.py` |
 | Whole-morning test | `evaluation/long_qa.py` |
 | Ego4D NLQ test | `evaluation/ego4d_nlq.py`, `tools/fetch_ego4d.py` |
@@ -180,7 +191,8 @@ config.py       every setting in one place (values marked TUNE are starting poin
 modules/        runtime: video source, perception (hands, objects, camera motion), features,
                 trigger (hoi_gate.py), stage 1 + state memory (vlm_logger.py), storage, habits
 model/          HOI-TCN: architecture, feature extraction, training, evaluation, metrics
-query/          stage 2: grounded answers, moment search, rule-based "where is X?"
+search/         the search part: keyword, meaning and image search over the diary file
+query/          stage 2: grounded answers, which moment, rule-based "where is X?"
 evaluation/     benchmark, diary accuracy, QA, whole-morning test, Ego4D NLQ, figures
 tools/          dataset fetchers (EPIC windows, Ego4D clips), labelling tool, demo video, code zip
 detect/         YOLOv8 fine-tuning for your own objects

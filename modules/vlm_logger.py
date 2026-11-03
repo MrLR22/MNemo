@@ -441,7 +441,8 @@ class ActionLogger:
     def __init__(self, describer, store=None, window_s: float = C.VLM_WINDOW_S, frames: int = C.VLM_FRAMES,
                  track_states: bool = C.VLM_TRACK_STATES, embedder=None):
         """embedder: optional modules.landmarks.ClipEmbedder; then every window, described or skipped, gets an
-        image fingerprint rec["fp"] (CLIP vector of its middle frame) for image search (query/locate.py)."""
+        image fingerprint rec["fp"] (CLIP vector of its middle frame) for image search (search/), also written to
+        the store when there is one."""
         self.describer = describer
         self.embedder = embedder
         self.store = store
@@ -490,6 +491,9 @@ class ActionLogger:
             t0 = time.time()
             rec["fp"] = self.embedder.embed([window[len(window) // 2].image])[0]
             rec["fp_dt"] = time.time() - t0
+            if self.store is not None:                  # the diary file keeps it for search/ (no image is kept)
+                self.store.add_fingerprint(window[0].ts, window[0].ts + timedelta(seconds=seconds), rec["fp"],
+                                           self.embedder.model_id)
         if call is not None and k < len(call) and not call[k]:
             rec["called"] = False
             self.windows.append(rec)
