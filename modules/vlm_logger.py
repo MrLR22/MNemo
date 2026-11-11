@@ -89,6 +89,43 @@ _SEEN_RULES = ("\nSEEN line (always the last line): at most " + str(C.VLM_MAX_SE
 _PIPES = "\nWrite every DID line with the two | separators exactly as shown."
 
 
+# v6 (lines-v6, 2026-11-11): the camera can be anywhere, not only in a kitchen. On 13 non-kitchen Ego4D clips the
+# v3 prompt (above) turned raking, pressing a button or rinsing a mat into "picks up ... / puts down ...", because the
+# verb had to come from a fixed list ("use the closest one"); it reported a tap and a fridge outdoors, because STATE
+# lines were asked "for each of" a list of kitchen appliances; and it named unknown things with a confident wrong
+# word. v6: any action verb in one form (presses, rakes); picks up / puts down only for really lifting / setting down
+# (so "where did I put X?" still works); opens / closes / turns on / turns off kept exact (state memory); a general
+# name when unsure; STATE lines only for things clearly visible.
+_V6_HEAD = """These {n} frames cover {sec:.0f} seconds of video from a camera worn on the chest of the user \
+(first-person view). Hands in the lower part of the image are the user's own hands. The video can come from \
+anywhere: a home, a workplace, a shop or outdoors.
+
+Report what the USER does with their hands or body in these {sec:.0f} seconds. Ignore what other people do.
+
+Answer in exactly this format and nothing else:
+PLACE: <where the user is, e.g. living room, bedroom, garage, garden, office desk, shop, kitchen>
+"""
+_V6_RULES = """
+DID lines: one per action, in time order, at most """ + str(C.VLM_MAX_ACTIONS) + """, never the same line twice.
+- verb: the action itself, in this form: presses, rakes, folds, ties, sprays, sweeps, types on, scrolls, plugs in, \
+hangs up, cuts, pours, wipes, washes. Use "picks up" and "puts down" ONLY when an object is lifted from or set down \
+on a surface. For doors, lids, drawers, switches and taps use exactly: opens, closes, turns on, turns off.
+- object: as specific as you are sure of. If you are not sure what it is, write a general name (tool, cloth, \
+container, device, paper, bag) instead of guessing.
+No DID line if the user does nothing with their hands. Holding something without doing anything with it is not an \
+action."""
+_V6_STATE_RULES = """
+STATE lines: only for doors, drawers, cupboards, appliances, taps or lights that are clearly visible in the LAST \
+frame, with their state at that moment. No STATE line for anything that is not in view."""
+
+
+def v6_prompts() -> tuple[str, str]:
+    actions = _V6_HEAD + _DID_LINE + _V6_RULES + _PIPES + "\nDo not invent objects you cannot see."
+    states = (_V6_HEAD + "STATE: <object> = <open|closed|on|off>\n" + _DID_LINE + _V6_STATE_RULES + _V6_RULES
+              + _PIPES + "\nDo not invent objects you cannot see.")
+    return actions, states
+
+
 def lines_prompts(seen: bool = C.VLM_SEEN) -> tuple[str, str]:
     """(actions only, actions + states) prompt templates; seen=False gives exactly the lines-v3 prompts."""
     sl, sr, pp = (_SEEN_LINE, _SEEN_RULES, _PIPES) if seen else ("", "", "")
@@ -101,17 +138,21 @@ def lines_prompts(seen: bool = C.VLM_SEEN) -> tuple[str, str]:
 PROMPT_LINES, PROMPT_LINES_STATES = lines_prompts()
 
 
-def build_prompt(n: int, sec: float, track_states: bool = True, check: list[str] | None = None) -> str:
-    if C.VLM_FORMAT != "lines":
+def build_prompt(n: int, sec: float, track_states: bool = True, check: list[str] | None = None,
+                 version: str | None = None) -> str:
+    """version: a prompt version (default C.VLM_PROMPT_VERSION); "lines-v6" is the any-place prompt."""
+    version = version or C.VLM_PROMPT_VERSION
+    if C.VLM_FORMAT != "lines" and version != "lines-v6":
         return (PROMPT_STATES if track_states else PROMPT).format(n=n, sec=sec)
-    actions, states = lines_prompts(C.VLM_SEEN)
+    v6 = version == "lines-v6"
+    actions, states = v6_prompts() if v6 else lines_prompts(C.VLM_SEEN)
     if not track_states:
         return actions.format(n=n, sec=sec)
     p = states.format(n=n, sec=sec)
     if check:
         c = _CHECK.format(objects=", ".join(check))
         # before the SEEN rule: generation stops after the SEEN line, so the check must be answered earlier
-        p = p.replace(_SEEN_RULES, c + _SEEN_RULES) if C.VLM_SEEN else p + c
+        p = p.replace(_SEEN_RULES, c + _SEEN_RULES) if C.VLM_SEEN and not v6 else p + c
     return p
 
 
@@ -243,6 +284,29 @@ _KNOWN_VERBS = sorted({v.strip() for v in VERBS.split(",")} | {"takes out", "put
                       key=len, reverse=True)
 
 
+_IRREGULAR = {"do": "does", "go": "goes", "have": "has"}
+
+
+def canon_verb(verb: str) -> str:
+    """One form for every verb, so the same action is counted the same way: "press" / "presses" → "presses",
+    "rake" → "rakes", "carry" → "carries". Verbs already in that form are kept."""
+    words = verb.split()
+    if not words or verb in _KNOWN_VERBS:
+        return verb
+    w = words[0]
+    if w.endswith("ing") or w.endswith("ed") or (w.endswith("s") and not w.endswith("ss")):
+        return verb
+    if w in _IRREGULAR:
+        w = _IRREGULAR[w]
+    elif w.endswith(("s", "sh", "ch", "x", "z", "o")):
+        w += "es"
+    elif w.endswith("y") and len(w) > 1 and w[-2] not in "aeiou":
+        w = w[:-1] + "ies"
+    else:
+        w += "s"
+    return " ".join([w] + words[1:])
+
+
 def _did_actions(body: str) -> list[dict]:
     """One DID line → actions. The asked format is "verb | object | where", but the model often writes
     "verb object -> where", sometimes several on one line separated by commas (58% of DID lines once a
@@ -268,7 +332,7 @@ def _did_actions(body: str) -> list[dict]:
             verb = verb or seg.split()[0]             # a verb outside the list ("holds phone -> table")
             what, _, where = seg[len(verb):].partition("->")
             items.append([verb, what.strip(), where.strip()])
-    return [{"verb": v, "object": None if o in _NONE else o, "where": None if w in _NONE else w}
+    return [{"verb": canon_verb(v), "object": None if o in _NONE else o, "where": None if w in _NONE else w}
             for v, o, w in items if v not in _NONE]
 
 
@@ -410,11 +474,12 @@ class VLMDescriber:
         return self._generate(msgs, videos=[video], metadata=[meta], max_new_tokens=max_new_tokens,
                               stop_on_loop=stop_on_loop)
 
-    def describe(self, frames_bgr: list[np.ndarray], seconds: float, check: list[str] | None = None) -> str:
+    def describe(self, frames_bgr: list[np.ndarray], seconds: float, check: list[str] | None = None,
+                 version: str | None = None) -> str:
         """frames_bgr: evenly spaced frames covering `seconds` of video. check: objects whose state must be
-        reported (StateTracker.to_check)."""
+        reported (StateTracker.to_check). version: prompt version (default C.VLM_PROMPT_VERSION)."""
         return self._video_call(frames_bgr, seconds,
-                                lambda n: build_prompt(n, seconds, self.track_states, check),
+                                lambda n: build_prompt(n, seconds, self.track_states, check, version),
                                 C.VLM_MAX_NEW_TOKENS, stop_on_loop=C.VLM_FORMAT == "lines")
 
     def ask_video(self, frames_bgr: list[np.ndarray], seconds: float, question: str) -> str:
